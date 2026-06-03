@@ -466,6 +466,26 @@ async function runTests() {
     assert(starter.max_customers === 50);
   });
 
+  await test('free limits: 20 msg/mo, 1 customer', () => {
+    const free = PLAN_LIMITS.free;
+    assert(free, 'PLAN_LIMITS.free must exist');
+    assert(free.max_messages_month === 20, `Expected 20, got ${free && free.max_messages_month}`);
+    assert(free.max_customers === 1, `Expected 1, got ${free && free.max_customers}`);
+  });
+
+  await test('every admin-assignable plan has a PLAN_LIMITS entry (single source of truth)', () => {
+    // Guards the v3.4.2-class drift: onboard signup + admin set-plan now derive
+    // limits from PLAN_LIMITS, so every VALID_ADMIN_PLAN must have an entry here
+    // or those call-sites would crash / silently fall back.
+    for (const p of plansModule.VALID_ADMIN_PLANS) {
+      const limits = PLAN_LIMITS[p];
+      assert(limits, `PLAN_LIMITS is missing an entry for admin-assignable plan '${p}'`);
+      assert(typeof limits.max_customers === 'number', `PLAN_LIMITS.${p}.max_customers must be a number`);
+      assert(typeof limits.max_messages_month === 'number', `PLAN_LIMITS.${p}.max_messages_month must be a number`);
+      assert(typeof limits.managed_ai === 'boolean', `PLAN_LIMITS.${p}.managed_ai must be a boolean`);
+    }
+  });
+
   await test('isSelfHosted() reflects SHENMAY_DEPLOYMENT env', () => {
     const isSelfHostedNow = process.env.SHENMAY_DEPLOYMENT === 'selfhosted';
     assert(isSelfHosted() === isSelfHostedNow);
