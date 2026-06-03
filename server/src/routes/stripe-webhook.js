@@ -43,15 +43,24 @@ function getStripe() {
 
 
 router.post('/', async (req, res) => {
-  const stripe = getStripe();
   let event;
 
   try {
     if (STRIPE_WEBHOOK_SECRET) {
+      const stripe = getStripe();
       const sig = req.headers['stripe-signature'];
       event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
+    } else if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
+      // Refuse the dev-mode bypass in production. An unsigned endpoint lets
+      // anyone POST a forged event — e.g. a fake checkout.session.completed
+      // that issues a free self-hosted license key, or flips a tenant onto a
+      // paid plan. Mirror the Resend webhook sibling: in prod, no signing
+      // secret means every webhook is rejected until one is wired.
+      console.error('[Stripe Webhook] STRIPE_WEBHOOK_SECRET is unset in production — rejecting unsigned webhook.');
+      return res.status(400).send('Webhook signing secret not configured');
     } else {
-      // Dev mode: no signature verification
+      // Dev mode (non-production, no secret): parse the body directly so local
+      // testing with the Stripe CLI or curl works without a signing secret.
       event = JSON.parse(req.body.toString());
     }
   } catch (err) {
@@ -61,6 +70,32 @@ router.post('/', async (req, res) => {
 
   const { type, data: { object } } = event;
   console.log(`[Stripe Webhook] ${type}`);
+
+  // ── Idempotency guard ──────────────────────────────────────────────────────
+  // Stripe delivers at-least-once: a timeout, a slow 200, a 5xx, or a manual
+  // resend all cause the SAME event to arrive again. Record event.id the first
+  // time and skip repeats — otherwise a retried checkout.session.completed
+  // issues (and emails) a SECOND self-hosted license key. The INSERT … ON
+  // CONFLICT DO NOTHING is atomic, so even concurrent redeliveries can't both
+  // win the race. (The marker is rolled back below if processing then fails.)
+  if (event.id) {
+    try {
+      const { rowCount } = await db.query(
+        `INSERT INTO processed_stripe_events (event_id, type)
+         VALUES ($1, $2) ON CONFLICT (event_id) DO NOTHING`,
+        [event.id, type]
+      );
+      if (rowCount === 0) {
+        console.log(`[Stripe Webhook] Duplicate ${type} (${event.id}) — already processed, skipping.`);
+        return res.json({ received: true, duplicate: true });
+      }
+    } catch (err) {
+      // Couldn't record the event → don't risk double-processing. A 500 makes
+      // Stripe retry, and the absent row means the retry is processed cleanly.
+      console.error('[Stripe Webhook] Idempotency check failed:', err.message);
+      return res.status(500).json({ error: 'Webhook idempotency check failed' });
+    }
+  }
 
   try {
     switch (type) {
@@ -226,6 +261,12 @@ router.post('/', async (req, res) => {
     res.json({ received: true });
   } catch (err) {
     console.error('[Stripe Webhook] Error processing event:', err.message);
+    // Processing failed after we recorded the event id — remove the marker so
+    // Stripe's retry reprocesses it instead of being skipped as a duplicate.
+    if (event.id) {
+      await db.query('DELETE FROM processed_stripe_events WHERE event_id = $1', [event.id])
+        .catch(delErr => console.error('[Stripe Webhook] Failed to roll back idempotency marker:', delErr.message));
+    }
     res.status(500).json({ error: 'Webhook processing failed' });
   }
 });
