@@ -19,6 +19,7 @@
 
 const { handler: generateReport }     = require('./universal/generate_report');
 const { handler: requestSpecialist }  = require('./universal/request_specialist');
+const { validateWebhookUrl }          = require('../utils/validateWebhookUrl');
 
 async function handleCustomTool(toolRow, params, context) {
   const { tool_type, config = {}, display_name, name } = toolRow;
@@ -199,6 +200,18 @@ async function handleCustomTool(toolRow, params, context) {
         };
       }
 
+      // SSRF guard (defence-in-depth) — rows created before the route-level
+      // validation may still hold an internal URL, so re-check here before
+      // ever issuing the request.
+      const urlErr = validateWebhookUrl(webhook_url);
+      if (urlErr) {
+        console.warn(`[CustomTool] connect "${name}" blocked: ${urlErr}`);
+        return {
+          success: false,
+          error:   `Tool "${display_name}" has an invalid webhook URL: ${urlErr}`,
+        };
+      }
+
       // Build auth headers from config
       const authHeaders = {};
       if (auth_type === 'bearer' && auth_token) {
@@ -221,8 +234,25 @@ async function handleCustomTool(toolRow, params, context) {
             tenant_id:   context.tenantId,
             params,
           }) : undefined,
+          // Do NOT follow redirects: validateWebhookUrl is a string-only check,
+          // so a public URL that 3xx-redirects to an internal host (e.g. the
+          // cloud-metadata endpoint) would otherwise bypass the guard. This is
+          // the only outbound surface that returns the response body to the
+          // caller, so an unchecked redirect is a real exfiltration path.
+          redirect: 'manual',
           signal: AbortSignal.timeout(8000), // 8-second timeout
         });
+
+        // With redirect:'manual', a 3xx surfaces as an opaque redirect
+        // (type 'opaqueredirect', status 0). Reject it instead of returning
+        // a body the caller could use to probe internal infrastructure.
+        if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
+          console.warn(`[CustomTool] connect "${name}" blocked redirect from ${webhook_url}`);
+          return {
+            success: false,
+            error:   `Webhook endpoint attempted a redirect, which is blocked for security reasons.`,
+          };
+        }
 
         const responseText = await response.text();
         let responseData;

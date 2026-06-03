@@ -26,6 +26,7 @@ const { toToolDefinition }     = require('../../tools/customToolLoader');
 const { handleCustomTool }     = require('../../tools/custom_tool_handler');
 const { incrementMessageCount } = require('../../middleware/subscription');
 const { safeDecryptJson }      = require('../../services/cryptoService');
+const { validateWebhookUrl }   = require('../../utils/validateWebhookUrl');
 
 const VALID_TOOL_TYPES   = ['lookup', 'calculate', 'report', 'escalate', 'connect'];
 const TOOL_NAME_PATTERN  = /^[a-z][a-z0-9_]{1,63}$/;
@@ -162,8 +163,13 @@ router.post('/', async (req, res, next) => {
     if (!VALID_TOOL_TYPES.includes(tool_type)) {
       return res.status(400).json({ error: `tool_type must be one of: ${VALID_TOOL_TYPES.join(', ')}` });
     }
-    if (tool_type === 'connect' && !config.webhook_url) {
-      return res.status(400).json({ error: 'connect tools require a webhook_url in config' });
+    if (tool_type === 'connect') {
+      if (!config.webhook_url) {
+        return res.status(400).json({ error: 'connect tools require a webhook_url in config' });
+      }
+      // SSRF guard — same check the tenant-webhook / Slack / Teams surfaces use.
+      const urlErr = validateWebhookUrl(config.webhook_url);
+      if (urlErr) return res.status(400).json({ error: `Webhook URL: ${urlErr}` });
     }
     if (['lookup', 'calculate'].includes(tool_type) && !config.data_category) {
       return res.status(400).json({ error: `${tool_type} tools require a data_category in config` });
@@ -191,6 +197,20 @@ router.patch('/:toolId', async (req, res, next) => {
     }
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: 'No updatable fields provided' });
+    }
+    // SSRF guard — whenever a config with a webhook_url is being written
+    // (connect tools), re-validate it just like create-time. config may
+    // arrive as an object (normal) or a JSON string (defensive parse).
+    if (updates.config !== undefined) {
+      let cfg = updates.config;
+      if (typeof cfg === 'string') {
+        try { cfg = JSON.parse(cfg); } catch { cfg = {}; }
+      }
+      const webhookUrl = cfg && typeof cfg === 'object' ? cfg.webhook_url : undefined;
+      if (webhookUrl) {
+        const urlErr = validateWebhookUrl(webhookUrl);
+        if (urlErr) return res.status(400).json({ error: `Webhook URL: ${urlErr}` });
+      }
     }
     const setClauses = Object.keys(updates).map((key, i) => `${key} = $${i + 3}`);
     const values = [req.params.toolId, req.portal.tenant_id, ...Object.values(updates)];
