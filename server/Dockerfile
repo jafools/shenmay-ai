@@ -2,9 +2,11 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Install dependencies
-COPY package.json ./
-RUN npm install --production
+# Install dependencies from the committed lockfile (npm ci) so the published
+# image tree matches exactly what CI tested — reproducible builds (P3-9).
+# --omit=dev: the server has no build step and ships production deps only.
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 
 # Copy source
 COPY . .
