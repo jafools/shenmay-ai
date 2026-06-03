@@ -5,6 +5,35 @@
 
 ---
 
+## Last updated: 2026-06-03 (PM) — **v3.5.9 LIVE** — built the 2 remaining greenlit-P2 PRs + shipped the whole sweep fix batch to customers
+
+Continuation of the morning health sweep (entry below). Built the 2 queued P2 PRs, merged both to `main`, then — Austin: *"yes we go ahead and ship everything"* — cut **v3.5.9** and deployed to prod. SaaS + on-prem now carry all 5 sweep fix PRs (3 P1 + 7 P2).
+
+### PRs built + merged this session
+- ✅ **[#200](https://github.com/jafools/shenmay-ai/pull/200) `fix/stripe-webhook`** (2×P2, squash `f6af851`, CI 5/5):
+  - **Unsigned-event rejection** — the `dev mode: no signature verification` else-branch accepted ANY unsigned event when `STRIPE_WEBHOOK_SECRET` is unset, *including in production*. Now mirrors the Resend sibling: signed → `constructEvent`; **prod + no secret → 400** every webhook; non-prod + no secret → keep the bypass for local Stripe-CLI/curl testing. `getStripe()` moved into the signed branch so a prod-no-secret request 400s cleanly instead of constructing a client.
+  - **Idempotency** — `processed_stripe_events` ledger (**migration 043**, `event_id` PK). Handler does an atomic `INSERT … ON CONFLICT DO NOTHING` before processing; duplicates short-circuit `{received:true,duplicate:true}`. The marker is rolled back if processing then throws (avoids the mark-before-process hazard). Stops a retried `checkout.session.completed` from double-issuing a self-hosted license key.
+- ✅ **[#201](https://github.com/jafools/shenmay-ai/pull/201) `fix/billing-frontend-migration`** (4×P2, squash `3f59bd2`, CI 5/5):
+  - **SaaS trial/free counter never reset** — `resetSelfHostedUsage` was gated `if (!isSelfHosted()) return` AND keyed on `current_period_end <= NOW()`, but `current_period_end` is nullable-with-no-default and set NOWHERE (onboard.js / seedSelfHostedTenant.js / licenseService.applyPlanLimits all skip it) → `NULL <= NOW()` never matched → the reset was **dead even for self-hosted**. Re-keyed on `usage_reset_at` (NOT NULL, bumped on every reset), un-gated, renamed `resetExpiredUsage`. SaaS scoped to `plan IN ('trial','free')` (paid stays Stripe's `invoice.paid`); self-hosted resets every active sub. → memory `feedback_dead_trigger_column_silently_disables_job`.
+  - **Input-visibility regression #4** — 4 settings inputs rendered `#EDE7D7`-on-`#EDE7D7` (invisible until focus) → shared `inputStyle` (already imported): LabelsSection, ConnectorsSection, WebhooksSection, DataApiSection.
+  - **Conversations checkbox** — the row container was missing the Tailwind `group` class its `opacity-0 group-hover:opacity-100` checkbox depends on → added `group`.
+  - **Migration 019 boot-loop** — bare `ALTER TABLE customer_data RENAME TO customer_data_legacy` → `to_regclass`-guarded DO-block (renames only when source exists AND target doesn't). Already-applied on prod/staging so it's a no-op there; protects fresh installs / re-runs (Dockerfile CMD is `migrate && server`).
+  - No new integration tests — can't run locally (no PG), the fixes mirror already-reviewed siblings, and CI exercises boot + routes + migrations.
+
+### Release — v3.5.9 (shipped same session)
+- **Gate**: fresh 5×5 e2e-repeatability on post-fix `main`/`3f59bd2` → **10/10 green** ([run 26875179815](https://github.com/jafools/shenmay-ai/actions/runs/26875179815)) — saas-repeat 1–5 + onprem-repeat 1–5 + verdict.
+- **Tag** `v3.5.9` → `docker-publish.yml`. **First publish FAILED** on a transient GHCR push-auth `DeadlineExceeded: context deadline exceeded` (the build was cached/fine — only the push timed out); `gh run rerun 26875392918 --failed` → success, `:3.5.9`/`:3.5`/`:stable`/`:latest` pushed + made public.
+- **Hetzner deploy**: `git fetch --tags && git checkout v3.5.9 && IMAGE_TAG=3.5.9 docker compose pull/up backend frontend`. Verified: both containers `ghcr.io/jafools/shenmay-{backend,frontend}:3.5.9`; internal `127.0.0.1:3001/api/health` 200 + **external `https://shenmay.ai/api/health` 200**; **migration 043 applied on prod** (`to_regclass('public.processed_stripe_events')` non-null), 019 skipped (already tracked).
+- **Customers**: SaaS live on v3.5.9; on-prem `:stable` = v3.5.9. All 3 P1 + 7 P2 from the sweep now reach customers.
+
+### Gotcha logged
+`gh run watch … | tail -N` **masks the watcher's exit code** — a shell pipeline returns the LAST command's status (`tail` = 0), so a FAILED run reads as "exit 0". The transient GHCR push failure was initially missed this way. Verify run conclusion via `gh run view <id> --json conclusion`, or run `gh run watch --exit-status` with no pipe.
+
+### Backlog (unchanged — nothing pressing)
+Pre-existing security-ops queue (Dependabot, automated pg_dump backups, 2FA/TOTP, `docs/SECURITY.md`) + deferred P3s (Team-page footer copy at ShenmayTeam.jsx:278 — fix the COPY, NOT the role gate; breach-detector independence; platform/tenant shared `JWT_SECRET`; bare separator-less personnummer; detect-tenant response-trim).
+
+---
+
 ## Last updated: 2026-06-03 — **FULL-PRODUCT HEALTH SWEEP (v3.5.8)** — report-first, no code shipped (0 P0 / 3 P1 / ~13 P2 / ~20 P3)
 
 Austin asked for a full "is the product still working as intended" sweep across backend / frontend / on-prem / cloud, as a `/goal` at ultracode. REPORT-FIRST: findings catalogued, fixes deferred to his triage. **First action was reconciling git** — the local working copy was 17 commits behind (v3.4.3); fast-forwarded to origin/main `7573e27` (v3.5.8) after stashing a stale SESSION_NOTES draft.
