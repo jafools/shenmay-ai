@@ -123,6 +123,11 @@ router.get('/data-api-key', async (req, res, next) => {
 // Returns the full key ONCE — never stored in plain text, cannot be retrieved again.
 router.post('/data-api-key', async (req, res, next) => {
   try {
+    // Owner-only: a Data API key grants full programmatic read/write over the
+    // tenant's customer book via /api/v1/*. Mirror the privacy/anon-mode gates.
+    if (req.portal.role !== 'owner') {
+      return res.status(403).json({ error: 'Only the account owner can manage the Data API key.' });
+    }
     if (!bcrypt) return res.status(500).json({ error: 'Auth module not available on server.' });
 
     const fullKey = generateDataApiKey();
@@ -133,6 +138,19 @@ router.post('/data-api-key', async (req, res, next) => {
       `UPDATE tenants SET data_api_key_hash = $1, data_api_key_prefix = $2 WHERE id = $3`,
       [hash, prefix, req.portal.tenant_id]
     );
+
+    writeAuditLog({
+      actorType   : 'admin',
+      actorId     : req.portal.admin_id,
+      actorEmail  : req.portal.email,
+      tenantId    : req.portal.tenant_id,
+      eventType   : 'data_api_key.rotated',
+      resourceType: 'tenant',
+      resourceId  : req.portal.tenant_id,
+      description : 'Owner generated/rotated the Data API key',
+      req,
+      success     : true,
+    });
 
     res.json({
       key:     fullKey,
@@ -145,10 +163,27 @@ router.post('/data-api-key', async (req, res, next) => {
 // DELETE /api/portal/settings/data-api-key — revoke
 router.delete('/data-api-key', async (req, res, next) => {
   try {
+    if (req.portal.role !== 'owner') {
+      return res.status(403).json({ error: 'Only the account owner can manage the Data API key.' });
+    }
     await db.query(
       `UPDATE tenants SET data_api_key_hash = NULL, data_api_key_prefix = NULL WHERE id = $1`,
       [req.portal.tenant_id]
     );
+
+    writeAuditLog({
+      actorType   : 'admin',
+      actorId     : req.portal.admin_id,
+      actorEmail  : req.portal.email,
+      tenantId    : req.portal.tenant_id,
+      eventType   : 'data_api_key.revoked',
+      resourceType: 'tenant',
+      resourceId  : req.portal.tenant_id,
+      description : 'Owner revoked the Data API key',
+      req,
+      success     : true,
+    });
+
     res.json({ ok: true, message: 'Data API key revoked.' });
   } catch (err) { next(err); }
 });
