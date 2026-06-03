@@ -2,7 +2,8 @@
  * TOOL: send_document
  *
  * Universal tool — works across any industry.
- * Emails a formatted document / report to the customer (or any recipient).
+ * Emails a formatted document / report to the customer on file (the recipient is
+ * always the authenticated customer's address — never a model-supplied one).
  *
  * Typical flow in an agentic session:
  *   1. Agent calls generate_report to assemble structured analysis
@@ -74,13 +75,6 @@ const inputSchema = {
         'actionable sentence starting with a verb (e.g. "Review your IRA beneficiary designations").',
       items: { type: 'string' },
     },
-    recipient_email: {
-      type: 'string',
-      description:
-        'The email address to send the document to. Leave blank to use the ' +
-        'email address on file for this customer. Only override if the customer ' +
-        'explicitly gives you a different address during the conversation.',
-    },
     disclaimer: {
       type: 'string',
       description:
@@ -92,32 +86,31 @@ const inputSchema = {
 };
 
 async function handler(
-  { subject, summary, sections, next_steps, recipient_email, disclaimer },
+  { subject, summary, sections, next_steps, disclaimer },
   { db, customerId, customer, tenant }
 ) {
-  // 1. Resolve recipient email
-  let toEmail = recipient_email && recipient_email.trim();
+  // 1. Resolve recipient email — ALWAYS the authenticated customer's on-file
+  // address. The recipient is intentionally NOT taken from the model's tool
+  // input: an LLM-/visitor-supplied recipient turned this into an authenticated
+  // open-relay (a document from the platform's trusted SMTP to ANY address).
+  // Anonymous sessions resolve to the @visitor placeholder and are refused below.
+  const { rows } = await db.query(
+    `SELECT email, first_name, last_name FROM customers WHERE id = $1`,
+    [customerId]
+  );
+  if (!rows.length || !rows[0].email) {
+    return {
+      success: false,
+      message:
+        'Could not send the document: no email address found for this customer. ' +
+        'Ask the customer to confirm their email address and try again.',
+    };
+  }
+  const toEmail = rows[0].email;
 
-  if (!toEmail) {
-    // Fetch the customer's email from DB (not always on the context object)
-    const { rows } = await db.query(
-      `SELECT email, first_name, last_name FROM customers WHERE id = $1`,
-      [customerId]
-    );
-    if (!rows.length || !rows[0].email) {
-      return {
-        success: false,
-        message:
-          'Could not send the document: no email address found for this customer. ' +
-          'Ask the customer to confirm their email address and try again.',
-      };
-    }
-    toEmail = rows[0].email;
-
-    // Fill customer name if not on context
-    if (!customer.first_name && rows[0].first_name) {
-      customer = { ...customer, first_name: rows[0].first_name, last_name: rows[0].last_name };
-    }
+  // Fill customer name if not on context
+  if (!customer.first_name && rows[0].first_name) {
+    customer = { ...customer, first_name: rows[0].first_name, last_name: rows[0].last_name };
   }
 
   // Don't send to anonymous visitor placeholder addresses
@@ -179,7 +172,7 @@ async function handler(
     message:
       `The document "${subject}" has been sent to ${toEmail}. ` +
       `${customerName} should receive it within a few minutes. ` +
-      `Let them know to check their inbox${toEmail !== recipient_email ? '' : ' at ' + toEmail}.`,
+      `Let them know to check their inbox.`,
   };
 }
 

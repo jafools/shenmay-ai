@@ -122,6 +122,18 @@ router.post('/trial', async (req, res, next) => {
       });
     }
 
+    // Lifetime per-email cap (the documented "3 per email ever"). The active-
+    // trial fast-path above already returns an in-flight key; this stops a
+    // throwaway-email farm from minting unbounded keys over time — the DB index
+    // on issued_to_email is non-unique, so nothing else bounds it.
+    const { rows: priorRows } = await db.query(
+      `SELECT COUNT(*)::int AS n FROM licenses WHERE issued_to_email = $1 AND plan = 'trial'`,
+      [email.toLowerCase().trim()]
+    );
+    if (priorRows[0].n >= 3) {
+      return res.status(429).json({ error: 'Trial limit reached for this email. Please contact sales to continue.' });
+    }
+
     // Generate new trial key (14-day expiry)
     const hex         = crypto.randomBytes(8).toString('hex').toUpperCase();
     const trial_key   = `SHENMAY-${hex.slice(0,4)}-${hex.slice(4,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}`;

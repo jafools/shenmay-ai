@@ -112,6 +112,16 @@ const loginLimiter = makeRateLimiter({
   message: { error: 'Too many login attempts. Try again in 15 minutes.' },
 });
 
+// License trial issuance (license-master only): cap throwaway-email trial-key
+// farming. The /trial handler additionally enforces a 3-per-email lifetime cap.
+const licenseTrialLimiter = makeRateLimiter({
+  windowMs: 60 * 60 * 1000,
+  max:      parseInt(process.env.LICENSE_TRIAL_RATE_LIMIT_MAX || '5', 10),
+  standardHeaders: true,
+  legacyHeaders:   false,
+  message: { error: 'Too many trial requests. Try again later.' },
+});
+
 // Global safety net: 150 req/min per IP (catches all other endpoints).
 // Override via GLOBAL_RATE_LIMIT_MAX env var — needed in CI where the full
 // E2E suite shares an IP and can easily exceed the default.
@@ -210,6 +220,7 @@ if (!isSelfHosted()) {
 app.use('/api/setup', require('./routes/setup'));
 
 // Routes — License validation (called by self-hosted instances; only active when SHENMAY_LICENSE_MASTER=true)
+app.use('/api/license/trial', licenseTrialLimiter);
 app.use('/api/license', require('./routes/license'));
 
 // Routes — Public license checkout (creates Stripe Checkout Session for self-hosted license purchases)
