@@ -44,9 +44,9 @@ async function runRetentionCycle() {
   console.log(`[DataRetention] Starting retention cycle at ${startedAt.toISOString()}`);
 
   try {
-    await resetSelfHostedUsage();
+    await resetExpiredUsage();
   } catch (err) {
-    console.error('[DataRetention] Self-hosted usage reset error:', err.message);
+    console.error('[DataRetention] Usage reset error:', err.message);
   }
 
   try {
@@ -299,31 +299,41 @@ async function anonymizeCustomer(customerId, tenantId, requestedBy) {
   console.log(`[DataRetention] Anonymized customer ${customerId}`);
 }
 
-// ── 4. SELF-HOSTED MONTHLY USAGE RESET ───────────────────────────────────────
+// ── 4. MONTHLY USAGE RESET ────────────────────────────────────────────────────
 //
-// SaaS tenants get their counter reset by the Stripe invoice.paid webhook.
-// Self-hosted tenants have no Stripe subscription firing that event, so we
-// reset them here whenever current_period_end has passed.
+// Zeroes messages_used_this_month a month after each subscription's last reset.
+// The trigger is usage_reset_at (NOT NULL, defaults to NOW(), bumped on every
+// reset) — NOT current_period_end, which trial/free and self-hosted rows are
+// seeded with as NULL, so the old `current_period_end <= NOW()` predicate never
+// matched them (NULL <= NOW() is never true).
 //
-async function resetSelfHostedUsage() {
+//   • SaaS PAID plans are reset by the Stripe `invoice.paid` webhook on the real
+//     billing cycle — we must NOT touch them here or the two resets would fight.
+//   • SaaS trial/free plans have no Stripe subscription, so invoice.paid never
+//     fires for them. Without this job their counter never resets and they are
+//     permanently capped after the first month's allowance. (The bug this fixes.)
+//   • Self-hosted has no Stripe at all, so every active subscription resets here.
+//
+async function resetExpiredUsage() {
   const { isSelfHosted } = require('../config/plans');
 
-  // Only run this check on self-hosted instances (single-tenant).
-  // On the SaaS VPS this table has many tenants and Stripe handles resets.
-  if (!isSelfHosted()) return;
+  // On SaaS, scope the reset to trial/free — paid plans belong to Stripe's
+  // invoice.paid. On self-hosted (single-tenant, no Stripe) every active sub
+  // resets. planScope is a static fragment chosen by deployment mode, never
+  // user input, so interpolating it is injection-safe.
+  const planScope = isSelfHosted() ? '' : `AND plan IN ('trial', 'free')`;
 
   const { rowCount } = await db.query(
     `UPDATE subscriptions
         SET messages_used_this_month = 0,
-            usage_reset_at           = NOW(),
-            current_period_start     = current_period_end,
-            current_period_end       = current_period_end + INTERVAL '1 month'
-      WHERE current_period_end <= NOW()
-        AND status = 'active'`
+            usage_reset_at           = NOW()
+      WHERE status = 'active'
+        AND usage_reset_at <= NOW() - INTERVAL '1 month'
+        ${planScope}`
   );
 
   if (rowCount > 0) {
-    console.log(`[DataRetention] Self-hosted: reset monthly usage for ${rowCount} subscription(s)`);
+    console.log(`[DataRetention] Reset monthly usage for ${rowCount} subscription(s)`);
   }
 }
 

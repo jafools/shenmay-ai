@@ -30,7 +30,20 @@ UPDATE customers
 
 
 -- ── 2. Rename old table (preserves existing financial data) ──────────────────
-ALTER TABLE customer_data RENAME TO customer_data_legacy;
+-- Guarded so this migration is genuinely re-runnable (the header above promises
+-- "Safe to re-run", and the backend boots with `migrate && server` on every
+-- start). A bare RENAME throws "relation customer_data_legacy already exists"
+-- on a second run, which crashes the migrate step and boot-loops the container.
+-- Rename only when the source still exists AND the target does not; otherwise
+-- the rename already happened on a prior run and we leave the rebuilt tables be.
+DO $$
+BEGIN
+  IF to_regclass('public.customer_data') IS NOT NULL
+     AND to_regclass('public.customer_data_legacy') IS NULL
+  THEN
+    EXECUTE 'ALTER TABLE customer_data RENAME TO customer_data_legacy';
+  END IF;
+END $$;
 
 
 -- ── 3. Create new generic customer_data table ─────────────────────────────────

@@ -186,7 +186,7 @@ const WebhooksSection = () => {
               readOnly
               value={newSecret}
               className="flex-1 px-3 py-2 rounded-xl text-xs font-mono focus:outline-none"
-              style={{ background: "#EDE7D7", border: "1px solid #EDE7D7", color: "#3A3D39" }}
+              style={inputStyle}
             />
             <button
               onClick={copySecret}
