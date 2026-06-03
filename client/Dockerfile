@@ -6,8 +6,10 @@ WORKDIR /app
 # Accept optional build args for Vite environment variables
 ARG VITE_API_BASE_URL=""
 
-COPY package.json ./
-RUN npm install
+# npm ci from the committed lockfile → reproducible image (P3-9).
+# Full install (incl. devDependencies) — vite/build tooling is needed by `npm run build`.
+COPY package.json package-lock.json ./
+RUN npm ci
 
 COPY . .
 RUN npm run build
