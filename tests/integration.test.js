@@ -581,6 +581,17 @@ async function runTests() {
       assert(res.status === 404, `Expected 404, got ${res.status}`);
     });
 
+    await test('POST /api/auth/register → 404 (orphaned auth router removed)', async () => {
+      // Regression guard: the legacy /api/auth/* router allowed unauth cross-tenant
+      // row injection + a self-assigned advisor role. It was removed; this exact
+      // attack shape must now 404 (no handler), not create anything.
+      const res = await post(saasUrl, '/api/auth/register', {
+        email: 'x@example.com', password: 'Test123!', first_name: 'A', last_name: 'B',
+        user_type: 'advisor', tenant_id: '00000000-0000-0000-0000-000000000000', role: 'admin',
+      });
+      assert(res.status === 404, `Expected 404 (route removed), got ${res.status}`);
+    });
+
     await test('POST /api/onboard/register accessible (not blocked)', async () => {
       const res = await post(saasUrl, '/api/onboard/register', {
         email: 'test@example.com',
