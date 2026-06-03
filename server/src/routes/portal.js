@@ -65,6 +65,10 @@ function requirePortalAuth(req, res, next) {
 
 router.use(requirePortalAuth);
 
+// Owner-gate state-changing routes (GET stays open to any authenticated seat)
+// on the sensitive-config sub-routers — applied at their mounts below.
+const { requireOwnerForWrites } = require('../middleware/requireOwner');
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CURRENT-USER + ADMIN ACCOUNT — extracted to sub-routers
@@ -454,12 +458,12 @@ router.use('/subscription', require('./portal/subscription-routes'));
 // ═══════════════════════════════════════════════════════════════════════════
 // TEAM / AGENT MANAGEMENT — extracted to ./portal/team-routes.js
 // ═══════════════════════════════════════════════════════════════════════════
-router.use('/team', require('./portal/team-routes'));
+router.use('/team', require('./portal/team-routes')); // owner||member gate is inline (co-admins manage the team)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // API KEY MANAGEMENT — extracted to ./portal/api-key-routes.js
 // ═══════════════════════════════════════════════════════════════════════════
-router.use('/api-key', require('./portal/api-key-routes'));
+router.use('/api-key', requireOwnerForWrites, require('./portal/api-key-routes'));
 
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -531,7 +535,7 @@ router.get('/plans', async (req, res) => {
 // CUSTOM TOOLS — extracted to ./portal/tools-routes.js
 // Self-service tool builder (CRUD) + /:toolId/test sandbox. All routes scoped
 // to req.portal.tenant_id; req.portal is populated by requirePortalAuth.
-router.use('/tools', require('./portal/tools-routes'));
+router.use('/tools', requireOwnerForWrites, require('./portal/tools-routes'));
 
 
 
@@ -539,8 +543,8 @@ router.use('/tools', require('./portal/tools-routes'));
 // ── Integrations — extracted to ./portal/{connectors,webhooks}-routes.js ──────
 // Slack / Teams lightweight notifications lives in connectors-routes.js;
 // the rich HMAC-signed tenant_webhooks flow lives in webhooks-routes.js.
-router.use('/connectors', require('./portal/connectors-routes'));
-router.use('/webhooks',   require('./portal/webhooks-routes'));
+router.use('/connectors', requireOwnerForWrites, require('./portal/connectors-routes'));
+router.use('/webhooks',   requireOwnerForWrites, require('./portal/webhooks-routes'));
 
 
 

@@ -43,7 +43,7 @@ router.get('/', async (req, res, next) => {
 // POST /api/portal/team/invite  — invite a new agent
 router.post('/invite', async (req, res, next) => {
   try {
-    const { email, first_name, last_name, role = 'agent' } = req.body;
+    const { email, first_name, last_name } = req.body;
     if (!email) return res.status(400).json({ error: 'email is required' });
 
     // Only owner can invite
@@ -101,7 +101,7 @@ router.post('/invite', async (req, res, next) => {
         tempHash,
         first_name || null,
         last_name  || null,
-        role === 'owner' ? 'agent' : role, // can't invite another owner
+        'agent', // invites create 'agent' seats only — role is NOT read from the body, so a client can't mass-assign a privileged role ('member'=Admin / 'owner'). member/owner are granted by other deliberate flows.
         inviteToken,
         inviteExpires,
         req.portal.admin_id,
