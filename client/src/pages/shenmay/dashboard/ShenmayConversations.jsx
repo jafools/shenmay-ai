@@ -82,12 +82,12 @@ const ConversationList = ({
             placeholder="Search by name or email…"
             className="w-full pl-8 pr-7 py-2 rounded-lg text-[12px] outline-none"
             style={{
-              background: "#EDE7D7",
-              border: "1px solid #EDE7D7",
+              background: "#FFFFFF",
+              border: "1px solid #D8D0BD",
               color: "#1A1D1A",
             }}
             onFocus={e => e.target.style.borderColor = "rgba(15,95,92,0.4)"}
-            onBlur={e  => e.target.style.borderColor = "#EDE7D7"}
+            onBlur={e  => e.target.style.borderColor = "#D8D0BD"}
           />
           {search && (
             <button onClick={() => onSearchChange("")}

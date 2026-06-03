@@ -10,7 +10,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- ============================================================
 -- TENANTS — Companies using Shenmay AI platform
 -- ============================================================
-CREATE TABLE tenants (
+CREATE TABLE IF NOT EXISTS tenants (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name            VARCHAR(255) NOT NULL,
     slug            VARCHAR(100) NOT NULL UNIQUE,
@@ -61,7 +61,7 @@ CREATE TABLE tenants (
 -- ============================================================
 -- ADVISORS — Human specialists at tenant firms
 -- ============================================================
-CREATE TABLE advisors (
+CREATE TABLE IF NOT EXISTS advisors (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
 
@@ -80,7 +80,7 @@ CREATE TABLE advisors (
 -- ============================================================
 -- CUSTOMERS — End-users of the AI agent
 -- ============================================================
-CREATE TABLE customers (
+CREATE TABLE IF NOT EXISTS customers (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     assigned_advisor_id UUID REFERENCES advisors(id) ON DELETE SET NULL,
@@ -105,16 +105,16 @@ CREATE TABLE customers (
     last_interaction_at TIMESTAMPTZ
 );
 
-CREATE INDEX idx_customers_tenant ON customers(tenant_id);
-CREATE INDEX idx_customers_advisor ON customers(assigned_advisor_id);
-CREATE INDEX idx_customers_onboarding ON customers(tenant_id, onboarding_status);
+CREATE INDEX IF NOT EXISTS idx_customers_tenant ON customers(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_customers_advisor ON customers(assigned_advisor_id);
+CREATE INDEX IF NOT EXISTS idx_customers_onboarding ON customers(tenant_id, onboarding_status);
 
 -- ============================================================
 -- CUSTOMER_DATA — Flexible structured data per customer
 -- Stores ANY type of domain data depending on vertical
 -- (financial accounts, insurance policies, medical records, etc.)
 -- ============================================================
-CREATE TABLE customer_data (
+CREATE TABLE IF NOT EXISTS customer_data (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     customer_id     UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
 
@@ -136,13 +136,13 @@ CREATE TABLE customer_data (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_customer_data_customer ON customer_data(customer_id);
-CREATE INDEX idx_customer_data_category ON customer_data(customer_id, data_category);
+CREATE INDEX IF NOT EXISTS idx_customer_data_customer ON customer_data(customer_id);
+CREATE INDEX IF NOT EXISTS idx_customer_data_category ON customer_data(customer_id, data_category);
 
 -- ============================================================
 -- CONVERSATIONS
 -- ============================================================
-CREATE TABLE conversations (
+CREATE TABLE IF NOT EXISTS conversations (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     customer_id     UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
 
@@ -165,13 +165,13 @@ CREATE TABLE conversations (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_conversations_customer ON conversations(customer_id);
-CREATE INDEX idx_conversations_status ON conversations(customer_id, status);
+CREATE INDEX IF NOT EXISTS idx_conversations_customer ON conversations(customer_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_status ON conversations(customer_id, status);
 
 -- ============================================================
 -- MESSAGES
 -- ============================================================
-CREATE TABLE messages (
+CREATE TABLE IF NOT EXISTS messages (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
 
@@ -183,13 +183,13 @@ CREATE TABLE messages (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_messages_conversation ON messages(conversation_id);
-CREATE INDEX idx_messages_conversation_time ON messages(conversation_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_messages_conversation_time ON messages(conversation_id, created_at);
 
 -- ============================================================
 -- FLAGS
 -- ============================================================
-CREATE TABLE flags (
+CREATE TABLE IF NOT EXISTS flags (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     customer_id     UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     conversation_id UUID REFERENCES conversations(id) ON DELETE SET NULL,
@@ -216,14 +216,14 @@ CREATE TABLE flags (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_flags_customer ON flags(customer_id);
-CREATE INDEX idx_flags_status ON flags(status);
-CREATE INDEX idx_flags_advisor ON flags(assigned_advisor_id, status);
+CREATE INDEX IF NOT EXISTS idx_flags_customer ON flags(customer_id);
+CREATE INDEX IF NOT EXISTS idx_flags_status ON flags(status);
+CREATE INDEX IF NOT EXISTS idx_flags_advisor ON flags(assigned_advisor_id, status);
 
 -- ============================================================
 -- ADVISOR-CUSTOMER ASSIGNMENTS (many-to-many)
 -- ============================================================
-CREATE TABLE advisor_customers (
+CREATE TABLE IF NOT EXISTS advisor_customers (
     advisor_id      UUID NOT NULL REFERENCES advisors(id) ON DELETE CASCADE,
     customer_id     UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     is_primary      BOOLEAN NOT NULL DEFAULT false,
@@ -243,13 +243,13 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_tenants_updated_at
+CREATE OR REPLACE TRIGGER trg_tenants_updated_at
     BEFORE UPDATE ON tenants FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-CREATE TRIGGER trg_advisors_updated_at
+CREATE OR REPLACE TRIGGER trg_advisors_updated_at
     BEFORE UPDATE ON advisors FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-CREATE TRIGGER trg_customers_updated_at
+CREATE OR REPLACE TRIGGER trg_customers_updated_at
     BEFORE UPDATE ON customers FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-CREATE TRIGGER trg_customer_data_updated_at
+CREATE OR REPLACE TRIGGER trg_customer_data_updated_at
     BEFORE UPDATE ON customer_data FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-CREATE TRIGGER trg_flags_updated_at
+CREATE OR REPLACE TRIGGER trg_flags_updated_at
     BEFORE UPDATE ON flags FOR EACH ROW EXECUTE FUNCTION update_updated_at();

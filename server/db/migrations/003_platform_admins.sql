@@ -5,7 +5,7 @@
 -- They can create/manage tenants but cannot access tenant data.
 -- ============================================================
 
-CREATE TABLE platform_admins (
+CREATE TABLE IF NOT EXISTS platform_admins (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name            VARCHAR(255) NOT NULL,
     email           VARCHAR(255) NOT NULL UNIQUE,
@@ -15,9 +15,9 @@ CREATE TABLE platform_admins (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_platform_admins_email ON platform_admins(email);
+CREATE INDEX IF NOT EXISTS idx_platform_admins_email ON platform_admins(email);
 
-CREATE TRIGGER trg_platform_admins_updated_at
+CREATE OR REPLACE TRIGGER trg_platform_admins_updated_at
     BEFORE UPDATE ON platform_admins FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 -- ============================================================
@@ -25,7 +25,7 @@ CREATE TRIGGER trg_platform_admins_updated_at
 -- When a tenant is provisioned, a token is generated for the
 -- first admin to set their password and activate their account.
 -- ============================================================
-CREATE TABLE tenant_invitations (
+CREATE TABLE IF NOT EXISTS tenant_invitations (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     advisor_id      UUID NOT NULL REFERENCES advisors(id) ON DELETE CASCADE,
@@ -35,5 +35,5 @@ CREATE TABLE tenant_invitations (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_tenant_invitations_token ON tenant_invitations(token);
-CREATE INDEX idx_tenant_invitations_tenant ON tenant_invitations(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_invitations_token ON tenant_invitations(token);
+CREATE INDEX IF NOT EXISTS idx_tenant_invitations_tenant ON tenant_invitations(tenant_id);

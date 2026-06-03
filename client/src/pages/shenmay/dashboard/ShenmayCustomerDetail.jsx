@@ -534,7 +534,7 @@ const CustomerDataSection = ({ customerId }) => {
                   onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
                   placeholder="e.g. portfolio, goals"
                   className="w-full rounded-lg px-3 py-2 text-sm text-[#1A1D1A] bg-transparent outline-none"
-                  style={{ background: "#EDE7D7", border: "1px solid #EDE7D7" }}
+                  style={{ background: "#FFFFFF", border: "1px solid #D8D0BD" }}
                 />
               </div>
               <div>
@@ -545,7 +545,7 @@ const CustomerDataSection = ({ customerId }) => {
                   onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
                   placeholder="e.g. Account Balance"
                   className="w-full rounded-lg px-3 py-2 text-sm text-[#1A1D1A] bg-transparent outline-none"
-                  style={{ background: "#EDE7D7", border: "1px solid #EDE7D7" }}
+                  style={{ background: "#FFFFFF", border: "1px solid #D8D0BD" }}
                 />
               </div>
             </div>
@@ -558,7 +558,7 @@ const CustomerDataSection = ({ customerId }) => {
                   onChange={(e) => setForm((f) => ({ ...f, value: e.target.value }))}
                   placeholder="e.g. $245,000"
                   className="w-full rounded-lg px-3 py-2 text-sm text-[#1A1D1A] bg-transparent outline-none"
-                  style={{ background: "#EDE7D7", border: "1px solid #EDE7D7" }}
+                  style={{ background: "#FFFFFF", border: "1px solid #D8D0BD" }}
                 />
               </div>
               <div>
@@ -569,7 +569,7 @@ const CustomerDataSection = ({ customerId }) => {
                   onChange={(e) => setForm((f) => ({ ...f, value_type: e.target.value }))}
                   placeholder="currency / date / text"
                   className="w-full rounded-lg px-3 py-2 text-sm text-[#1A1D1A] bg-transparent outline-none"
-                  style={{ background: "#EDE7D7", border: "1px solid #EDE7D7" }}
+                  style={{ background: "#FFFFFF", border: "1px solid #D8D0BD" }}
                 />
               </div>
             </div>
