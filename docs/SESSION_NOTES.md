@@ -5,6 +5,38 @@
 
 ---
 
+## Last updated: 2026-06-03 — **FULL-PRODUCT HEALTH SWEEP (v3.5.8)** — report-first, no code shipped (0 P0 / 3 P1 / ~13 P2 / ~20 P3)
+
+Austin asked for a full "is the product still working as intended" sweep across backend / frontend / on-prem / cloud, as a `/goal` at ultracode. REPORT-FIRST: findings catalogued, fixes deferred to his triage. **First action was reconciling git** — the local working copy was 17 commits behind (v3.4.3); fast-forwarded to origin/main `7573e27` (v3.5.8) after stashing a stale SESSION_NOTES draft.
+
+### Evidence the product is healthy
+- **5×5 repeatability gate**: fresh dispatch [run 26846022297](https://github.com/jafools/shenmay-ai/actions/runs/26846022297) → **11/11 green** (5 SaaS + 5 on-prem + verdict); nightly cron green every day. Local unit suites 187 green (tokenizer 46 + openai-adapter 29 + brand-learning 91 + integration-unit 21).
+- **Prod** shenmay.ai: ext+int `/api/health` 200, images `:3.5.8`, containers up 2wks, legacy nomii→301. **Staging** healthy, refresh timer active.
+- **Live staging walk** (Chrome MCP, throwaway tenant, cleaned up): real `/api/onboard/register` ✓, login UI ✓, onboarding wizard ✓, all 10 dashboard surfaces render clean ✓, 16 settings sections ✓, widget session ✓ + chat path verified (graceful `NoApiKeyError` → friendly message, HTTP 200) ✓.
+- **Audit confirmed clean**: multi-tenant isolation (every query scoped by tenant_id), AES-256-GCM correct, `resolveApiKey` platform-fallback correctly `isSelfHosted()`-gated (regression #1 ✓), model-drift via `getDefaultModel` (regression #2 ✓), lazy-require SDK (#6 ✓), friendly-error-destination (#5 ✓), widget boundary (JWT scope/XSS/CORS/sanitization), PG≤16 idempotency (except mig 019), parameterized SQL throughout, 0 exploitable deps.
+
+### Headline findings (full list in the sweep report + audit task outputs)
+- **P1 — SaaS trial still 1/20, not 3/50.** `onboard.js:236` hardcodes `(1,20)` instead of `PLAN_LIMITS.trial` (=`3/50`, plans.js:45); `admin-routes.js:88-89` has a 2nd stale `1/20` copy. v3.4.2 bumped the constant + backfilled rows but never touched the signup INSERT → **every new SaaS signup hits the unusable 1-customer/20-msg wall** v3.4.2 thought it fixed. (Confirmed by 2 agents + my live read.)
+- **P1 — Platform-admin login brute-forceable.** `loginLimiter` is on onboard/auth login (index.js:185/192) but NOT on `/api/platform/auth` (index.js:198) — highest-priv account, only the 150/min global net.
+- **P1 — PII phone-number leak.** PHONE regex (piiTokenizer/detectors/index.js:91) needs separators; contiguous `5551234567` passes tokenizer AND breach-detector (shares same regex set) → raw phone reaches the LLM, violating the privacy promise.
+- **P2 cluster**: Stripe webhook accepts unsigned events when `STRIPE_WEBHOOK_SECRET` unset (stripe-webhook.js:50-59); Stripe no event-idempotency (retried checkout double-issues self-hosted licenses); SaaS trial/free message counter never resets (monthly reset gated to self-hosted only); `/api/auth/detect-tenant` unthrottled enumeration oracle; JWT alg unpinned; brand-learning embedding pre-pass sends un-re-audited candidate text to OpenAI before Layer-3 PII scan; PII lowercase-IBAN + dotted-SSN/personnummer residue; **input-visibility regression #4 re-introduced** in 4 hand-styled settings sections (Labels/Connectors/Webhooks/DataApi — CompanyProfile etc. are fine); Conversations bulk-select checkbox invisible; migration 019 bare `RENAME` → boot-loop on re-run (latent, on-prem/DR risk).
+- **P3 (~20)**: server npm audit 0→3 (qs DoS, unreachable); orphaned tests/api.test.js; client vitest harness unused; .env.example missing ~20 tunables; GCM IV 16B; mock-provider 500 / staging mock-canary technique broken (set-one-tenant-to-mock fails because mock is gated on env `LLM_PROVIDER`, not tenant column); Team-page footer copy lies (fix the COPY, not the role gate — agent corrected an inverted diagnosis); Data API example curls hardcoded to shenmay.ai; a11y label/id gaps; etc.
+
+### Fixes shipped this session (Austin greenlit "everything P1+P2"; report-first → fix)
+- ✅ **[#196](https://github.com/jafools/shenmay-ai/pull/196) trial-limits (P1)** — route onboard.js + admin-routes.js set-plan through `PLAN_LIMITS`; added `free` to `PLAN_LIMITS`; new SaaS trials now 3/50 (was the stale 1/20). **MERGED** (squash `0790d2b`). +2 unit guards (free-limits + "every admin plan has a PLAN_LIMITS entry").
+- ✅ **[#197](https://github.com/jafools/shenmay-ai/pull/197) auth-hardening (P1 + 2×P2)** — `loginLimiter` on `/api/platform/auth/login` (was unthrottled); JWT `algorithms:['HS256']` pinned at all 6 `jwt.verify` sites; `registerLimiter` on `/api/auth/register` + a 20/min limiter on `/api/auth/detect-tenant`. **MERGED**. +2 JWT unit tests (HS256 round-trip + alg:none rejection).
+- ⏳ **[#198](https://github.com/jafools/shenmay-ai/pull/198) pii-residue (P1 + 2×P2)** — keyword-anchored separator-less PHONE detector ("call 5551234567") + compact-lowercase IBAN + dotted SSN/personnummer + 5 fixtures. **Subtle bug caught**: an `i`-flag on the uppercase IBAN detector let the BBAN class swallow a trailing lowercase word ("…32 thanks") → mod-97 fail → real IBAN leaked (brand-learning fuzz iter 10). Fixed with a separate compact-lowercase detector + regression guard. CI green, **merging** (5×5 not required — no release tag cut this session).
+
+### Remaining greenlit P2s — QUEUED for the next session (2 PRs)
+1. **`fix/stripe-webhook`** — (a) reject unsigned events in prod when `STRIPE_WEBHOOK_SECRET` unset ([stripe-webhook.js:50-59](server/src/routes/stripe-webhook.js#L50) currently dev-bypasses; its Resend sibling refuses this); (b) event idempotency — a retried `checkout.session.completed` double-issues self-hosted license keys → needs a `processed_stripe_events` table + migration 043 (DO-block per the PG≤16 rule).
+2. **`fix/billing-frontend-migration`** — (a) SaaS trial/free **message counter never resets** (monthly reset gated to self-hosted only); (b) **input-visibility regression #4** in 4 hand-styled settings sections — LabelsSection.jsx:102, ConnectorsSection.jsx:201, WebhooksSection.jsx:189, DataApiSection.jsx:185 → use the shared `inputStyle`; (c) Conversations **bulk-select checkbox invisible** (missing `group` class); (d) **migration 019** bare `RENAME` → DO-block `IF EXISTS` guard (boot-loop risk on re-run).
+
+### Lower-priority deferred (from the sweep, not yet greenlit for fixing)
+- detect-tenant response-trim; bare separator-less personnummer (needs date-validation); breach-detector independence (P3, architectural); platform/tenant **shared `JWT_SECRET`** (P3); **Team-page footer copy** (P3 — fix the COPY at ShenmayTeam.jsx:278, NOT the role gate — an audit verifier corrected an inverted diagnosis); admin set-plan stale copy was fixed in #196.
+- Full per-finding detail (severity/repro/file:line/fix) in the two audit task outputs (`whbjabje9` structured + `w3qjm8352` prose, under the session temp dir) + the sweep report message.
+
+---
+
 ## Last updated: 2026-05-16 — **v3.5.8 LIVE** — v3.5.7 follow-ups (canary + TS migration + threshold tune)
 
 Sub-session arc: Austin asked to close out all 5 carry-overs from the v3.5.7 SESSION_NOTES in one batched ship. Four were known follow-ups; the fifth (live OpenAI canary) surfaced a real bug — the embedding distance threshold v3.5.6 shipped with was empirically wrong against live `text-embedding-3-small` vectors. Threshold tuning got rolled into the same PR + tag rather than deferring.
