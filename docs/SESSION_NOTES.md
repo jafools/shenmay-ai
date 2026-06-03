@@ -5,6 +5,47 @@
 
 ---
 
+## Last updated: 2026-06-03 (PM/3) — **v3.6.2 LIVE** — recovered a dead session + finished the R2 security-sweep P3 tail; whole sweep now shipped
+
+This session opened as a *"where did my session go??"* recovery. The prior session
+(`9fd023a7`) ran an **ultracode security-hardening sweep** (Round 1 = 49 agents, Round 2 =
+38 agents, adversarially verified) and shipped the **P1/P2 findings as #205–#212 → tagged
+v3.6.0 + v3.6.1** — but it hit the 5pm usage limit **mid-Batch-E (R2 P3-11)** and never wrote
+these notes, which is why this file was stuck at v3.5.10 while prod already ran v3.6.1.
+
+**Recovery method:** read the dead session's transcript (`.jsonl`) + its still-cached R2
+report out of `…/Temp/claude/…/tasks/_finalReport.md`, reconstructed the full fix-batch plan,
+and finished the two unshipped **P3 batches** as fresh PRs off `main`.
+
+### [#213](https://github.com/jafools/shenmay-ai/pull/213) `fix/ci-cd-hardening` — Batch E (CI/CD supply-chain), squash `849d6e1`, CI 5/5
+- **P3-9** reproducible images: both Dockerfiles `COPY package.json` + `npm install` (floating) → `COPY package.json package-lock.json` + `npm ci` (server `--omit=dev`; client full for the vite build). The published tree now matches what CI tests.
+- **P3-10** SHA-pin all 29 `uses:` to full commit SHAs (+ version comments, resolved live via `gh api`) so a mutable tag can't be repointed; added `.github/dependabot.yml` (github-actions, weekly, grouped) so pins don't go stale.
+- **P3-11** top-level `permissions: contents: read` on `ci.yml` + `e2e-repeatability.yml` (and as the restrictive default on `docker-publish.yml`, whose jobs keep their explicit `packages:write`).
+- Infra-only → 5×5-gate-skippable; the PR's own `selfhosted-smoke`/`onprem-e2e` `docker build` both images and validated the `npm ci` layers.
+
+### [#214](https://github.com/jafools/shenmay-ai/pull/214) `fix/soft-cap-atomicity` — Batch F (soft-cap atomicity + observability), squash `76acda8`, CI 5/5
+- **P3-2** customer-cap TOCTOU: capped plans now gate the import INSERT on the **live** count in one statement (`INSERT … SELECT … WHERE (SELECT COUNT(*) …) < max`; 0 rows ⇒ cap full), so two concurrent uploads can't both slip past `max_customers`. Unrestricted/uncapped skip the COUNT.
+- **P3-3** message-cap TOCTOU: `incrementMessageCount` → atomic compare-and-set (`… WHERE plan = ANY(unrestricted) OR messages_used < max`), returns whether it counted (callers unchanged).
+- **P3-4** audit-write durability: fire-and-forget writes dropped silently on DB error (a 7-yr compliance log) → process-level failure counter + structured stderr line, surfaced as **`audit_write_failures` on `/api/health`** (now live — confirms the deploy).
+- **P3-7** `backfillEncryption.js` OFFSET paging (skip/dupe under concurrent writes, still exits 0) → keyset paging (`WHERE id > $lastId`) + a final verification scan that fails the run if any plaintext row remains.
+
+### Release — v3.6.2 (shipped same session)
+- **Gate**: dispatched `e2e-repeatability.yml` on post-merge `main` (`76acda8`) → **10/10 cells + verdict green** ([run 26897585499](https://github.com/jafools/shenmay-ai/actions/runs/26897585499)); cells genuinely ran (~2m20s each), verdict logged *"✔ E2E passed 5x consecutively … Ship it."*
+- **Tag** `v3.6.2` → `docker-publish.yml` clean first try (no GHCR flake) → `:3.6.2`/`:3.6`/`:stable`/`:latest` public.
+- **Hetzner**: `git checkout v3.6.2 && IMAGE_TAG=3.6.2 docker compose pull/up backend frontend`. Verified both containers `:3.6.2`; internal `127.0.0.1:3001/api/health` 200 **and external `https://shenmay.ai/api/health` 200**, both returning `"audit_write_failures":0` (proves Batch F is live). **No new migrations** — pure image swap.
+
+### Net result
+**The entire R1+R2 ultracode security sweep is now shipped** — 0 P0; the P1s + P2s in v3.6.0/v3.6.1 (#205–#212); the P3 tail in **v3.6.2** (#213 + #214). On-prem customers get it via the rebuilt `:stable`.
+
+### Still open (deliberately)
+- **P3-6** CSV formula-injection — deferred; ships *with* the first CSV/XLSX export feature (no export sink exists today).
+- **R1 incident-recovery** (P2-3 token-version revocation, P2-4 secret-entropy floor, P2-5 key-id/rotation) — *partly-needs-human*, a separate track, never in the R2 P3 scope.
+
+### Gotcha logged
+On Git for Windows, `git show <ref>:.github/<file>` (a leading-dot path) can falsely report "missing" even when the file exists — it briefly looked like the #214 cross-merge had reverted Batch E. `git ls-tree -r <ref>` / `git grep <ref>` are authoritative and confirmed `main` was clean (the disjoint-file cross-merge was fine).
+
+---
+
 ## Last updated: 2026-06-03 (PM/2) — **v3.5.10 LIVE** — 9-agent re-audit closed the last 4 P2s; the entire sweep is now shipped
 
 After v3.5.9, Austin asked *"did we cover everything from the sweep?"* → an **ultracode adversarial re-audit** (9 agents: 6 domain auditors → adversarial-verify + completeness-critic → synthesis; **prose output, not schema**, per `feedback_workflow_prose_over_schema_for_heavy_audits`) reconciled every sweep P2 against post-v3.5.9 `main`. Then *"ship everything up to latest"* → cut **v3.5.10**.
