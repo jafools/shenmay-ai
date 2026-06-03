@@ -137,6 +137,44 @@ test('Phone matches international format', () => {
   assertNotContains(text, '555-987-6543');
 });
 
+test('Phone matches separator-less number in a phone context (P1 — sweep)', () => {
+  const t = new Tokenizer();
+  const { text } = t.tokenize('call 5551234567 when you can');
+  assertNotContains(text, '5551234567');
+  assertContains(text, '[PHONE_1]');
+});
+
+test('Phone matches separator-less international number after a keyword (P1 — sweep)', () => {
+  const t = new Tokenizer();
+  const { text } = t.tokenize('my cell is +15551234567');
+  assertNotContains(text, '15551234567');
+  assertContains(text, '[PHONE_1]');
+});
+
+test('IBAN matches lowercase compact form (P2 — sweep)', () => {
+  const t = new Tokenizer();
+  const { text } = t.tokenize('my iban is de89370400440532013000');
+  assertNotContains(text, 'de89370400440532013000');
+  assertContains(text, '[IBAN_1]');
+});
+
+test('IBAN does not over-run into a following lowercase word (regression guard)', () => {
+  const t = new Tokenizer();
+  // A case-insensitive flag once let the BBAN class swallow the trailing
+  // "thanks", breaking the mod-97 check so a real IBAN leaked. Must tokenize.
+  const { text } = t.tokenize('You can reach me at GB82 WEST 1234 5698 7654 32 thanks');
+  assertNotContains(text, 'GB82 WEST 1234 5698 7654 32');
+  assertContains(text, '[IBAN_1]');
+  assertContains(text, 'thanks');
+});
+
+test('SSN matches dotted separator form (P2 — sweep)', () => {
+  const t = new Tokenizer();
+  const { text } = t.tokenize('ssn 123.45.6789 on file');
+  assertNotContains(text, '123.45.6789');
+  assertContains(text, '[SSN_1]');
+});
+
 test('DOB matches ISO format', () => {
   const t = new Tokenizer();
   const { text } = t.tokenize('Born 1975-03-14, retiring soon');
