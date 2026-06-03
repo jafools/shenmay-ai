@@ -5,6 +5,36 @@
 
 ---
 
+## Last updated: 2026-06-03 (PM/2) — **v3.5.10 LIVE** — 9-agent re-audit closed the last 4 P2s; the entire sweep is now shipped
+
+After v3.5.9, Austin asked *"did we cover everything from the sweep?"* → an **ultracode adversarial re-audit** (9 agents: 6 domain auditors → adversarial-verify + completeness-critic → synthesis; **prose output, not schema**, per `feedback_workflow_prose_over_schema_for_heavy_audits`) reconciled every sweep P2 against post-v3.5.9 `main`. Then *"ship everything up to latest"* → cut **v3.5.10**.
+
+### Re-audit verdict (authoritative ledger)
+- **9 of 10 named P2s confirmed SHIPPED** in v3.5.9 (each re-verified at file:line against `main`).
+- The **"~13 P2" tally reconciled** — the delta was P1/P2 bucketing slop in the original sweep count, **not dropped findings**.
+- **1 named P2 was genuinely unshipped:** #6 brand-learning embedding pre-pass (named in prose at the sweep entry, never assigned a fix PR).
+- **3 NEW P2s the sweep under-counted:** migration trigger/DDL idempotency (001/003/016), Conversations search input invisible, CustomerDetail "New Record" inputs invisible.
+- **P3s (R1–R12) correctly held** — not promoted (detect-tenant response-shape oracle, shared `JWT_SECRET`, GCM IV, npm-audit `qs` DoS [unreachable], bare personnummer, TestModal textarea, onboard limiter parity, Data API hardcoded curls, etc.).
+
+### [#203](https://github.com/jafools/shenmay-ai/pull/203) `fix/remaining-sweep-p2s` (4×P2, squash `edba7c5`, CI 5/5)
+1. **Brand-learning embed PII gate (security, dormant exposure):** `mergeBucketPure` (`brandLearning/embeddings.js`) now runs `quickScanForResidualPii(text)` before `embedFn(text)` and withholds any PII-bearing candidate — closes the window where candidate text egressed to OpenAI before the Layer-3 outbound scan. Falls back to local token-overlap dedup; Layer-3 still blocks storage. Dormant (0 brand-learning tenants + Anthropic default); live the instant an OpenAI-BYOK tenant enables learning. +1 regression test (brand-learning 91→92).
+2. **Migration idempotency (reliability, DR):** migrations 001/003/016 — bare `CREATE TABLE`/`CREATE INDEX` → `IF NOT EXISTS`, bare `CREATE TRIGGER` → `CREATE OR REPLACE TRIGGER` (PG14+; prod is 16.9). Closes the `migrate && server` boot-loop on a DR restore against existing-but-untracked schema (same class as the 019 fix shipped in #201). No-op on running installs (tracked → skipped).
+3. **Conversations search input** invisible at rest (`#EDE7D7`-on-`#EDE7D7`, `onBlur` reset to `#EDE7D7`) → white `#FFFFFF` + `#D8D0BD`.
+4. **CustomerDetail "New Record"** 4 inputs invisible even while typing (no `onFocus`) → white `#FFFFFF` + `#D8D0BD`. Form card stays paperDeep.
+
+### Release — v3.5.10 (shipped same session)
+- Fresh 5×5 e2e-repeatability on `main`/`edba7c5` → **10/10 green** ([run 26877617399](https://github.com/jafools/shenmay-ai/actions/runs/26877617399)).
+- Tag `v3.5.10` → `docker-publish.yml` **clean on the first try** (no GHCR push-auth flake this time) → `:3.5.10`/`:3.5`/`:stable`/`:latest` pushed + public.
+- Hetzner: `git checkout v3.5.10 && IMAGE_TAG=3.5.10 docker compose pull/up backend frontend`. Verified both containers `:3.5.10`, internal `127.0.0.1:3001/api/health` 200 + **external `https://shenmay.ai/api/health` 200**.
+
+### Net result
+**Every confirmed P1/P2 from the v3.5.8 health sweep is now closed AND shipped to customers** — 3 P1 + 11 P2 across v3.5.9 + v3.5.10. Backlog reduces to the pre-existing security-ops queue (Dependabot, automated pg_dump backups, 2FA/TOTP, `docs/SECURITY.md`) + the deferred P3s above.
+
+### Process gotcha logged
+`gh run watch … | tail -N` masks the watcher's exit code (a shell pipeline returns the LAST command's status = `tail`'s 0) — a failed GHCR push read as "exit 0" on the v3.5.9 build. Verify run conclusion with `gh run view <id> --json conclusion`, or run `gh run watch --exit-status` with no pipe.
+
+---
+
 ## Last updated: 2026-06-03 (PM) — **v3.5.9 LIVE** — built the 2 remaining greenlit-P2 PRs + shipped the whole sweep fix batch to customers
 
 Continuation of the morning health sweep (entry below). Built the 2 queued P2 PRs, merged both to `main`, then — Austin: *"yes we go ahead and ship everything"* — cut **v3.5.9** and deployed to prod. SaaS + on-prem now carry all 5 sweep fix PRs (3 P1 + 7 P2).
