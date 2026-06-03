@@ -108,6 +108,7 @@ services:
       # `:-N` default here unless the code default is bumped to match.
       BRAND_LEARNING_INTERVAL_MS: ${BRAND_LEARNING_INTERVAL_MS:-}
       REGISTER_RATE_LIMIT_MAX: ${REGISTER_RATE_LIMIT_MAX:-3}
+      LICENSE_TRIAL_RATE_LIMIT_MAX: ${LICENSE_TRIAL_RATE_LIMIT_MAX:-5}
       GLOBAL_RATE_LIMIT_MAX: ${GLOBAL_RATE_LIMIT_MAX:-150}
       PORTAL_RATE_LIMIT_MAX: ${PORTAL_RATE_LIMIT_MAX:-30}
       # ── Deployment mode ───────────────────────────────────
