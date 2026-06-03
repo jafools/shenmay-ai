@@ -51,13 +51,13 @@ const detectors = [
     NAME: 'SSN',
     // US SSN: 3-2-4 with separator, excludes 000/666/900-999 area numbers
     // and 00 group / 0000 serial (per SSA rules).
-    pattern: /\b(?!000|666|9\d{2})\d{3}[-\s]?(?!00)\d{2}[-\s]?(?!0000)\d{4}\b/g,
+    pattern: /\b(?!000|666|9\d{2})\d{3}[-\s.]?(?!00)\d{2}[-\s.]?(?!0000)\d{4}\b/g,
     validate: () => true,
   },
   {
     NAME: 'SIN',
     // Swedish personnummer: YYMMDD-XXXX or YYYYMMDD-XXXX (12-digit)
-    pattern: /\b(?:19|20)?\d{6}[-+]\d{4}\b/g,
+    pattern: /\b(?:19|20)?\d{6}[-+.]\d{4}\b/g,
     validate: (m) => {
       // Luhn-check the last 10 digits (Swedish personnummer uses Luhn on YYMMDDXXXX)
       const digits = m.replace(/\D/g, '').slice(-10);
@@ -78,6 +78,18 @@ const detectors = [
     validate: (m) => ibanValid(m),
   },
   {
+    NAME: 'IBAN',
+    // Lowercase / compact IBANs (e.g. "de89370400440532013000"). Kept separate
+    // from the uppercase space-grouped detector above on purpose: putting a
+    // case-insensitive flag THERE lets the BBAN class greedily swallow a
+    // following lowercase word ("...7654 32 thanks"), which breaks the mod-97
+    // check so a real IBAN fails validation and leaks. A compact, no-internal-
+    // space lowercase form can't run past a space into prose, so it's safe.
+    // ibanValid() uppercases before checksumming, so the value still validates.
+    pattern: /\b[a-z]{2}\d{2}[a-z0-9]{11,30}\b/g,
+    validate: (m) => ibanValid(m),
+  },
+  {
     NAME: 'EMAIL',
     // RFC-5322 pragmatic subset — covers real-world emails without exploding.
     pattern: /\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b/g,
@@ -93,6 +105,20 @@ const detectors = [
       const digits = m.replace(/\D/g, '');
       return digits.length >= 10 && digits.length <= 15;
     },
+  },
+  {
+    NAME: 'PHONE',
+    // Separator-LESS phone numbers in an explicit phone context — the shape
+    // anonymous visitors actually type ("call 5551234567", "cell +15551234567").
+    // The separator-based detector above misses these. Keyword-anchored (like
+    // ACCOUNT) and pure-digit, so a bare digit run elsewhere isn't eaten and a
+    // separator-formatted number already caught above isn't double-matched.
+    pattern: /(?:phone|call|cell|mobile|tel|telephone|whatsapp|reach|text)[^\d]{0,15}(\+?\d{10,15})\b/gi,
+    validate: (m) => {
+      const digits = m.replace(/\D/g, '');
+      return digits.length >= 10 && digits.length <= 15;
+    },
+    group: 1,
   },
   {
     NAME: 'DOB',
