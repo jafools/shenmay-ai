@@ -630,6 +630,23 @@
   var API_BASE     = params.get('api')     || '';
   var PRIVACY_URL  = params.get('privacy') || '';   // optional privacy notice URL
 
+  // Redirect/exfil guard: only honor an `api` base on the SAME origin as this
+  // widget document. embed.js always passes its own (Shenmay) origin; an
+  // attacker-crafted cross-origin `?api=https://evil.example` (a scraped
+  // widget_key is enough to open this page) would otherwise redirect the
+  // visitor's session + Bearer token off-site. Drop it → fall back to
+  // same-origin (relative) URLs. Same-origin values (incl. path-prefixed
+  // deployments) are preserved unchanged.
+  if (API_BASE) {
+    try {
+      if (new URL(API_BASE, window.location.href).origin !== window.location.origin) {
+        API_BASE = '';
+      }
+    } catch (e) {
+      API_BASE = '';
+    }
+  }
+
   // Apply dynamic primary colour from URL param (may be overridden by server)
   document.documentElement.style.setProperty('--primary', PRIMARY);
   document.documentElement.style.setProperty('--primary-light', adjustColor(PRIMARY, 20));
@@ -686,10 +703,19 @@
   var privacyLink         = document.getElementById('shenmay-privacy-link');
   var humanBanner         = document.getElementById('human-mode-banner');
 
-  // Show privacy link if a URL was passed via embed param
+  // Show privacy link if a valid http(s) URL was passed via embed param.
+  // Validate the scheme — this page is CSP-exempt, so this is the only backstop
+  // against a `?privacy=javascript:...` / `data:...` link.
   if (PRIVACY_URL) {
-    privacyLink.href = PRIVACY_URL;
-    privacyLink.style.display = 'inline';
+    var safePrivacyUrl = '';
+    try {
+      var _pu = new URL(PRIVACY_URL, window.location.href);
+      if (_pu.protocol === 'http:' || _pu.protocol === 'https:') safePrivacyUrl = _pu.href;
+    } catch (e) { safePrivacyUrl = ''; }
+    if (safePrivacyUrl) {
+      privacyLink.href = safePrivacyUrl;
+      privacyLink.style.display = 'inline';
+    }
   }
 
   // ── Init ───────────────────────────────────────────────────────────────────
