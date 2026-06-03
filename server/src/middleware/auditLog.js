@@ -35,6 +35,19 @@
 
 const db = require('../db');
 
+// Observability for the fire-and-forget audit path (P3-4). A failed audit write
+// must never crash the app, but silent loss of a 7-year-retention compliance
+// log shouldn't be invisible either. Keep a process-level failure counter
+// (surfaced at /api/health) + a structured stderr line so dropped events are
+// detectable by ops even without a full metrics backend.
+let auditWriteFailures = 0;
+let lastAuditWriteError = null;
+
+/** Snapshot of audit-write failures for health/monitoring (P3-4). */
+function getAuditWriteFailures() {
+  return { failures: auditWriteFailures, lastError: lastAuditWriteError };
+}
+
 /**
  * Write a single audit event. Fire-and-forget — never throws.
  *
@@ -98,8 +111,19 @@ function writeAuditLog(opts) {
         ]
       );
     } catch (err) {
-      // Audit failure must NEVER crash the app — just log to stderr
-      console.error('[AuditLog] Write failed:', err.message);
+      // Audit failure must NEVER crash the app — but it MUST be detectable.
+      // Bump the monitored counter (exposed at /api/health) and emit a
+      // structured, greppable line so dropped compliance events surface (P3-4).
+      auditWriteFailures += 1;
+      lastAuditWriteError = {
+        at: new Date().toISOString(),
+        eventType: params?.eventType || null,
+        message: err.message,
+      };
+      console.error(
+        `[AuditLog] WRITE FAILED (total=${auditWriteFailures}) ` +
+        `event=${params?.eventType || 'unknown'}: ${err.message}`
+      );
     }
   });
 }
@@ -130,4 +154,4 @@ function auditMiddleware({ actorType = 'advisor', eventType = 'route.access', ge
   };
 }
 
-module.exports = { writeAuditLog, auditMiddleware };
+module.exports = { writeAuditLog, auditMiddleware, getAuditWriteFailures };
