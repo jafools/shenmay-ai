@@ -471,6 +471,27 @@ async function runTests() {
     assert(isSelfHosted() === isSelfHostedNow);
   });
 
+  console.log('\nJWT algorithm pinning (auth hardening)');
+
+  const authService = require('../server/src/services/authService');
+
+  await test('validateToken accepts a normal HS256 token', () => {
+    const token = authService.generateToken({ user_id: 'u1', tenant_id: 't1', user_type: 'customer', role: 'member', email: 'a@b.co' });
+    const decoded = authService.validateToken(token);
+    assert(decoded.user_id === 'u1', 'round-trip HS256 token must validate');
+  });
+
+  await test('validateToken rejects an alg:none token (algorithm is pinned)', () => {
+    // Hand-craft an unsigned token claiming alg:none (no jsonwebtoken dep needed
+    // here — server deps live in server/node_modules, not root). With
+    // algorithms:['HS256'] pinned, jwt.verify must reject it.
+    const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+    const forged = b64({ alg: 'none', typ: 'JWT' }) + '.' + b64({ user_id: 'attacker', user_type: 'platform_admin' }) + '.';
+    let threw = false;
+    try { authService.validateToken(forged); } catch { threw = true; }
+    assert(threw, 'validateToken must reject an alg:none token');
+  });
+
   // ══════════════════════════════════════════════════════════════════════════════
   // INTEGRATION TESTS — Server Mode Behavior
   // ══════════════════════════════════════════════════════════════════════════════

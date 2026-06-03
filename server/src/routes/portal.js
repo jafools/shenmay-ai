@@ -54,7 +54,7 @@ function requirePortalAuth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Portal session required' });
 
   try {
-    const payload = jwt.verify(token, PORTAL_JWT_SECRET);
+    const payload = jwt.verify(token, PORTAL_JWT_SECRET, { algorithms: ['HS256'] });
     if (!payload.portal) return res.status(401).json({ error: 'Invalid portal token' });
     req.portal = payload;   // { tenant_id, admin_id, email, role }
     next();
