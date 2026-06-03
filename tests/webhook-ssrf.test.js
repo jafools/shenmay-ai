@@ -27,7 +27,7 @@
 
 'use strict';
 
-const { validateWebhookUrl } = require('../server/src/utils/validateWebhookUrl');
+const { validateWebhookUrl, validateWebhookUrlAsync, isBlockedAddress } = require('../server/src/utils/validateWebhookUrl');
 const { handleCustomTool }   = require('../server/src/tools/custom_tool_handler');
 
 // ── Async-aware test runner (matches tests/brand-learning.test.js style) ─────
@@ -235,6 +235,63 @@ const ctx = { db: null, tenantId: 'tenant-1', customerId: 'customer-1' };
     assert(called === false, 'fetch must NOT be called when webhook_url is missing');
     assertEqual(result.success, false, 'result.success must be false');
     assert(/misconfigured/i.test(result.error), `expected a misconfiguration error, got: ${result.error}`);
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // 3. isBlockedAddress — resolved-IP classification (the internal-A-record /
+  //    DNS defense, plus IPv4-mapped-IPv6 normalization). Pure + deterministic.
+  // ═════════════════════════════════════════════════════════════════════════
+  console.log('\nisBlockedAddress (resolved IPs)');
+
+  await test('blocks loopback / RFC1918 / link-local / CGNAT / IPv6 internal / mapped', () => {
+    for (const ip of ['127.0.0.1', '10.1.2.3', '172.16.5.5', '192.168.0.1',
+                      '169.254.169.254', '100.64.0.1', '::1', 'fc00::1', 'fe80::1',
+                      '::ffff:127.0.0.1', '::ffff:169.254.169.254']) {
+      assert(isBlockedAddress(ip), `${ip} must be blocked`);
+    }
+  });
+
+  await test('allows ordinary public IPs (incl. mapped public + 172.32 boundary)', () => {
+    for (const ip of ['93.184.216.34', '8.8.8.8', '172.32.0.1', '1.1.1.1', '::ffff:93.184.216.34']) {
+      assert(!isBlockedAddress(ip), `${ip} must be allowed`);
+    }
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // 4. validateWebhookUrlAsync — sync string checks + DNS resolution (the
+  //    public-hostname-with-internal-A-record bypass). lookup is injected so
+  //    these stay hermetic (no real DNS).
+  // ═════════════════════════════════════════════════════════════════════════
+  console.log('\nvalidateWebhookUrlAsync (DNS-resolving)');
+
+  const lookupTo   = (...ips) => async () => ips.map(address => ({ address }));
+  const lookupFail = async () => { throw new Error('ENOTFOUND'); };
+
+  await test('rejects a public host that resolves to an internal IP (A-record bypass)', async () => {
+    const err = await validateWebhookUrlAsync('https://sneaky.example.com/x', { lookup: lookupTo('10.0.0.5') });
+    assert(err && /private|internal/i.test(err), `expected internal-address rejection, got: ${err}`);
+  });
+
+  await test('rejects when ANY resolved address is internal (mixed public+internal)', async () => {
+    const err = await validateWebhookUrlAsync('https://mixed.example.com/x', { lookup: lookupTo('93.184.216.34', '169.254.169.254') });
+    assert(err && /private|internal/i.test(err), `mixed result must be rejected, got: ${err}`);
+  });
+
+  await test('allows a public host that resolves to a public IP', async () => {
+    const err = await validateWebhookUrlAsync('https://api.example.com/x', { lookup: lookupTo('93.184.216.34') });
+    assertEqual(err, null, `a public-resolving host should pass, got: ${err}`);
+  });
+
+  await test('applies the sync checks first (http rejected without any DNS lookup)', async () => {
+    let looked = false;
+    const err = await validateWebhookUrlAsync('http://api.example.com/x', { lookup: async () => { looked = true; return [{ address: '93.184.216.34' }]; } });
+    assert(err && /https/i.test(err), `http must be rejected by the sync stage, got: ${err}`);
+    assert(looked === false, 'DNS lookup must not run when the sync check already fails');
+  });
+
+  await test('rejects an unresolvable host', async () => {
+    const err = await validateWebhookUrlAsync('https://does-not-resolve.example.com/x', { lookup: lookupFail });
+    assert(err && /resolve/i.test(err), `unresolvable host must be rejected, got: ${err}`);
   });
 
   // ── Summary ────────────────────────────────────────────────────────────────

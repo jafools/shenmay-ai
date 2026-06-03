@@ -43,6 +43,26 @@ const BLOCKED_HOSTNAME_PATTERNS = [
 ];
 
 /**
+ * True if a hostname OR a resolved IP literal is private/internal/loopback/
+ * link-local/CGNAT. Normalizes IPv4-mapped IPv6 (::ffff:1.2.3.4) to its IPv4
+ * so a mapped internal address can't slip past the dotted-IPv4 patterns.
+ *
+ * @param {string} addr  hostname or IP literal
+ * @returns {boolean}
+ */
+function isBlockedAddress(addr) {
+  let a = String(addr || '').toLowerCase().trim();
+  if (!a) return true;
+  const mapped = a.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  if (mapped) a = mapped[1];
+  if (BLOCKED_HOSTNAMES.has(a)) return true;
+  for (const pattern of BLOCKED_HOSTNAME_PATTERNS) {
+    if (pattern.test(a)) return true;
+  }
+  return false;
+}
+
+/**
  * Synchronous validation of the URL string (no DNS resolution).
  * Returns an error string if invalid, or null if OK.
  *
@@ -73,16 +93,9 @@ function validateWebhookUrl(rawUrl) {
 
   const hostname = parsed.hostname.toLowerCase();
 
-  // Block known internal hostnames
-  if (BLOCKED_HOSTNAMES.has(hostname)) {
+  // Block known internal hostnames / private IP literals / link-local
+  if (isBlockedAddress(hostname)) {
     return 'Webhook URL must point to a public server';
-  }
-
-  // Block private IP ranges and link-local addresses
-  for (const pattern of BLOCKED_HOSTNAME_PATTERNS) {
-    if (pattern.test(hostname)) {
-      return 'Webhook URL must point to a public server';
-    }
   }
 
   // Block URLs with credentials (user:pass@host)
@@ -93,4 +106,49 @@ function validateWebhookUrl(rawUrl) {
   return null; // valid
 }
 
-module.exports = { validateWebhookUrl };
+/**
+ * Async SSRF validation: runs the synchronous string checks, then RESOLVES DNS
+ * and rejects if the hostname maps to any private/internal address. Closes the
+ * gap where a public hostname carries an internal A/AAAA record — which the
+ * string-only validateWebhookUrl cannot see. `lookup` is injectable for tests.
+ *
+ * NOTE: this resolves-then-rejects; it does NOT pin the connection to the
+ * resolved IP, so a DNS-rebind that flips the record between this check and the
+ * caller's fetch() remains theoretically possible. The sinks that use this also
+ * send with redirect:'manual', and are authenticated + mostly blind, so the
+ * residual is low. Pinning the validated IP is a tracked follow-up.
+ *
+ * @param {string} rawUrl
+ * @param {{ lookup?: (host: string) => Promise<Array<{address:string}>|string> }} [opts]
+ * @returns {Promise<string|null>}  error string, or null if OK
+ */
+async function validateWebhookUrlAsync(rawUrl, opts = {}) {
+  const syncErr = validateWebhookUrl(rawUrl);
+  if (syncErr) return syncErr;
+
+  let hostname;
+  try {
+    hostname = new URL(rawUrl.trim()).hostname.toLowerCase();
+  } catch {
+    return 'Webhook URL is not a valid URL';
+  }
+
+  const lookup = opts.lookup || ((host) => dns.promises.lookup(host, { all: true }));
+  let addresses;
+  try {
+    addresses = await lookup(hostname);
+  } catch {
+    return 'Webhook URL host could not be resolved';
+  }
+
+  const list = Array.isArray(addresses) ? addresses : [addresses];
+  for (const entry of list) {
+    const addr = (entry && typeof entry === 'object') ? entry.address : entry;
+    if (isBlockedAddress(addr)) {
+      return 'Webhook URL resolves to a private/internal address';
+    }
+  }
+  return null;
+}
+
+module.exports = { validateWebhookUrl, validateWebhookUrlAsync, isBlockedAddress };
