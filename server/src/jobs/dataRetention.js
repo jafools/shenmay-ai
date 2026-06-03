@@ -273,6 +273,14 @@ async function anonymizeCustomer(customerId, tenantId, requestedBy) {
     [customerId]
   );
 
+  // 3b. Delete PII breach-log rows for this customer. The audit log must not
+  // outlive an erasure request — closes the GDPR Art.17 gap where breach-log
+  // findings tied to an erased customer were otherwise retained indefinitely.
+  await db.query(
+    `DELETE FROM pii_breach_log WHERE customer_id = $1`,
+    [customerId]
+  );
+
   // 4. Anonymise message content but keep conversation metadata
   await db.query(
     `UPDATE messages m

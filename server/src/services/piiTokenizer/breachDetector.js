@@ -36,8 +36,14 @@ function scan(text) {
       if (!matched) continue;
       if (d.validate && !d.validate(matched)) continue;
       findings.push({
+        // NEVER store the raw matched value. pii_breach_log is retained for
+        // audit (migration 031), so it must not itself become a PII store — the
+        // prior `sample` field stored the FULL raw value for any match <=16
+        // chars (SSN/phone/DOB/postcode/short emails), contradicting the privacy
+        // policy and leaving regulated identifiers after a GDPR erasure. Keep
+        // only the non-identifying shape (type/length/offset).
         type:       d.NAME,
-        sample:     matched.length > 16 ? matched.slice(0, 8) + '...' + matched.slice(-4) : matched,
+        length:     matched.length,
         offset:     m.index,
       });
     }

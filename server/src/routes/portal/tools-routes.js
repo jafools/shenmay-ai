@@ -19,13 +19,14 @@ const router = require('express').Router();
 const db = require('../../db');
 
 const {
-  callClaudeWithTools, resolveApiKey,
+  callClaudeWithTools, resolveApiKey, buildTokenizer,
 } = require('../../services/llmService');
 const { getDefaultModel } = require('../../services/llm');
 const { toToolDefinition }     = require('../../tools/customToolLoader');
 const { handleCustomTool }     = require('../../tools/custom_tool_handler');
 const { incrementMessageCount } = require('../../middleware/subscription');
 const { safeDecryptJson }      = require('../../services/cryptoService');
+const { BreachError }          = require('../../services/piiTokenizer');
 const { validateWebhookUrl }   = require('../../utils/validateWebhookUrl');
 
 const VALID_TOOL_TYPES   = ['lookup', 'calculate', 'report', 'escalate', 'connect'];
@@ -370,7 +371,18 @@ router.post('/:toolId/test', async (req, res, next) => {
       return result;
     };
 
-    // 6. One real Claude call with only this tool available
+    // 6. One real Claude call with only this tool available.
+    // Tokenize PII before egress: with a real customer selected, this path bakes
+    // their name/email/background into the system prompt and the tool executor
+    // returns real customer_data. Attach the tokenizer + breach guard so the
+    // operator's pii_tokenization preference holds here too — every other egress
+    // (chat, ai-map, products) already does; /test was the lone gap.
+    const tokenizer = buildTokenizer({
+      tenant,
+      memoryFile: usingRealCustomer ? testCustomer.memory_file : null,
+      soulFile:   usingRealCustomer ? testCustomer.soul_file   : null,
+    });
+
     const toolDefs = [toToolDefinition(toolRow)];
     let aiResponse;
     try {
@@ -382,9 +394,19 @@ router.post('/:toolId/test', async (req, res, next) => {
         getDefaultModel(tenant.llm_provider, 'sonnet'),
         1024,
         apiKey,
-        { provider: tenant.llm_provider }
+        {
+          tokenizer,
+          breachCtx: { tenantId: req.portal.tenant_id, customerId: testCustomerId, callSite: 'tool_test' },
+          provider:  tenant.llm_provider,
+        }
       );
     } catch (llmErr) {
+      if (llmErr instanceof BreachError) {
+        return res.status(422).json({
+          error: 'The selected customer\'s data tripped our outbound PII safety check. Run the test against a sandbox (no customer), or pick a customer with less sensitive data.',
+          blocked_by_pii_guard: true,
+        });
+      }
       return res.status(502).json({ error: `LLM error: ${llmErr.message}` });
     }
 
