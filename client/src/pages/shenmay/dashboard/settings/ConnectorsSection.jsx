@@ -198,7 +198,7 @@ const ConnectorsSection = () => {
                   ? "https://hooks.slack.com/services/…"
                   : "https://outlook.office.com/webhook/…"}
                 className="w-full px-3 py-2.5 pr-10 rounded-xl text-[13px] outline-none"
-                style={{ background: "#EDE7D7", border: "1px solid #EDE7D7", color: "#3A3D39" }}
+                style={inputStyle}
               />
               <button onClick={() => setShowUrl(v => !v)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 transition-opacity hover:opacity-70"

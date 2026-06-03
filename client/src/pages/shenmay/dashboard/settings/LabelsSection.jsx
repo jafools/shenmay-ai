@@ -99,7 +99,7 @@ const LabelsSection = () => {
               maxLength={50}
               placeholder="Label name…"
               className="flex-1 px-3 py-2 rounded-lg text-[13px] outline-none"
-              style={{ background: "#EDE7D7", border: "1px solid #EDE7D7", color: "#1A1D1A" }}
+              style={inputStyle}
               onKeyDown={e => e.key === "Enter" && handleSave()}
             />
             {/* Color preview */}

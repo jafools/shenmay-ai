@@ -182,7 +182,7 @@ curl -X POST https://shenmay.ai/api/v1/customers/client-123/records \\
                   readOnly
                   value={newKey}
                   className="flex-1 px-3 py-2 rounded-xl text-xs font-mono focus:outline-none"
-                  style={{ background: "#EDE7D7", border: "1px solid #EDE7D7", color: "#3A3D39" }}
+                  style={inputStyle}
                 />
                 <button onClick={() => setShowKey(v => !v)} className="px-2.5 py-2 rounded-xl transition-colors" style={{ border: "1px solid #EDE7D7", color: "#6B6B64" }}>
                   {showKey ? <EyeOff size={14} /> : <Eye size={14} />}

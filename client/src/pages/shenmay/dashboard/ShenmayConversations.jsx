@@ -187,7 +187,7 @@ const ConversationList = ({
             return (
               <div
                 key={id}
-                className="flex items-start gap-0 transition-all duration-150"
+                className="group flex items-start gap-0 transition-all duration-150"
                 style={{
                   background: isSelected
                     ? "rgba(15,95,92,0.10)"
