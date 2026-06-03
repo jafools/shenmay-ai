@@ -18,6 +18,7 @@ const router = require('express').Router();
 const { parse: csvParse } = require('csv-parse/sync');
 
 const db = require('../../db');
+const { validateWebhookUrlAsync } = require('../../utils/validateWebhookUrl');
 const { resolveApiKey, callClaude, buildTokenizer } = require('../../services/llmService');
 const { BreachError } = require('../../services/piiTokenizer');
 const { markStepComplete } = require('../../utils/onboarding');
@@ -160,16 +161,25 @@ router.post('/ai-suggest', async (req, res, next) => {
       let url = req.body.url.trim();
       if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
 
+      // SSRF guard: require HTTPS + reject hosts that resolve to internal IPs.
+      const urlErr = await validateWebhookUrlAsync(url);
+      if (urlErr) return res.status(400).json({ error: `Could not use that URL: ${urlErr}` });
+
       let html;
       try {
         const resp = await fetch(url, {
           headers: { 'User-Agent': 'Mozilla/5.0 (compatible; NomiiBot/1.0)' },
+          redirect: 'manual', // don't let a public URL 3xx-redirect to an internal host
           signal: AbortSignal.timeout(10000),
         });
+        if (resp.type === 'opaqueredirect' || (resp.status >= 300 && resp.status < 400)) {
+          return res.status(422).json({ error: 'That URL attempted a redirect, which is blocked. Use the final URL, or paste a description instead.' });
+        }
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         html = await resp.text();
-      } catch (fetchErr) {
-        return res.status(422).json({ error: `Could not fetch that URL: ${fetchErr.message}` });
+      } catch {
+        // Generic message — do NOT reflect the fetch error (would be a host/port oracle).
+        return res.status(422).json({ error: 'Could not fetch that URL. Check it is publicly reachable, or paste a description instead.' });
       }
 
       // Strip tags, collapse whitespace, cap at ~8 000 chars to keep tokens low

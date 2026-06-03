@@ -19,6 +19,7 @@
 'use strict';
 
 const db = require('../db');
+const { validateWebhookUrlAsync } = require('../utils/validateWebhookUrl');
 
 const PORTAL_URL  = (process.env.PORTAL_URL || 'https://shenmay.ai').replace(/\/$/, '');
 const TIMEOUT_MS  = 8_000;
@@ -191,15 +192,24 @@ async function _sendTeams(url, eventType, data, tenantName) {
 // ── HTTP helper ────────────────────────────────────────────────────────────────
 
 async function _post(url, payload) {
+  // Re-validate at send time (DNS-resolving): the stored Slack/Teams URL passed
+  // a string-only check on write, but a host can resolve to an internal IP.
+  const urlErr = await validateWebhookUrlAsync(url);
+  if (urlErr) throw new Error(`Blocked notification URL: ${urlErr}`);
+
   const controller = new AbortController();
   const timer      = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
     const res = await fetch(url, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json', 'User-Agent': 'Shenmay-Notifications/1.0' },
-      body:    JSON.stringify(payload),
-      signal:  controller.signal,
+      method:   'POST',
+      headers:  { 'Content-Type': 'application/json', 'User-Agent': 'Shenmay-Notifications/1.0' },
+      body:     JSON.stringify(payload),
+      signal:   controller.signal,
+      redirect: 'manual', // block a 3xx hop to an internal host
     });
+    if (res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400)) {
+      throw new Error('Notification URL attempted a redirect, which is blocked.');
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       throw new Error(`HTTP ${res.status}: ${body.slice(0, 100)}`);

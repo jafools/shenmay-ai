@@ -29,6 +29,7 @@
 
 const crypto = require('crypto');
 const db     = require('../db');
+const { validateWebhookUrlAsync } = require('../utils/validateWebhookUrl');
 
 const DELIVERY_TIMEOUT_MS = 10_000;
 const RETRY_DELAY_MS      = 3_000;
@@ -70,6 +71,22 @@ async function _deliverAll(tenantId, eventType, data) {
 async function _deliver(hook, payload, isRetry = false) {
   const signature = _sign(payload, hook.secret_hash);
 
+  // Re-validate at delivery time (DNS-resolving). The URL passed a string-only
+  // check on write, but a host can resolve to an internal IP; treat a failure
+  // as a delivery failure rather than firing the request to an internal target.
+  const urlErr = await validateWebhookUrlAsync(hook.url);
+  if (urlErr) {
+    console.warn(`[Webhook] Blocked delivery for hook ${hook.id}: ${urlErr}`);
+    await db.query(
+      `UPDATE tenant_webhooks
+       SET last_triggered_at = NOW(), last_failure_at = NOW(),
+           consecutive_failures = consecutive_failures + 1, updated_at = NOW()
+       WHERE id = $1`,
+      [hook.id]
+    ).catch(() => {});
+    return;
+  }
+
   try {
     const controller = new AbortController();
     const timeout    = setTimeout(() => controller.abort(), DELIVERY_TIMEOUT_MS);
@@ -82,8 +99,9 @@ async function _deliver(hook, payload, isRetry = false) {
         'X-Shenmay-Event':     JSON.parse(payload).event,
         'User-Agent':          'Shenmay-Webhook/1.0',
       },
-      body:   payload,
-      signal: controller.signal,
+      body:     payload,
+      signal:   controller.signal,
+      redirect: 'manual', // block a 3xx hop to an internal host (opaqueredirect => !ok)
     }).finally(() => clearTimeout(timeout));
 
     const success = res.ok;
