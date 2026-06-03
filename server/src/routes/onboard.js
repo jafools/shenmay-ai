@@ -23,7 +23,7 @@ const jwt     = require('jsonwebtoken');
 const crypto  = require('crypto');
 const db      = require('../db');
 const { sendVerificationEmail, sendWelcomeEmail, sendPasswordResetEmail } = require('../services/emailService');
-const { isSelfHosted } = require('../config/plans');
+const { isSelfHosted, PLAN_LIMITS } = require('../config/plans');
 
 const PORTAL_JWT_SECRET = process.env.JWT_SECRET || 'shenmay-dev-secret';
 const PORTAL_JWT_EXPIRY = process.env.JWT_EXPIRY  || '7d';
@@ -230,11 +230,14 @@ router.post('/register', async (req, res, next) => {
       );
       console.log(`[Onboard] MASTER account created for ${email}`);
     } else {
-      // Trial: extremely limited to encourage upgrade (1 customer, 20 messages, 1 agent seat)
+      // Trial limits come from the single source of truth (PLAN_LIMITS.trial),
+      // NOT a hardcoded literal — otherwise a bump to the constant (e.g. the
+      // v3.4.2 1/20 → 3/50 change) silently never reaches new SaaS signups.
+      const t = PLAN_LIMITS.trial;
       await db.query(
         `INSERT INTO subscriptions (tenant_id, plan, status, max_customers, max_messages_month, managed_ai_enabled, max_agents)
-         VALUES ($1, 'trial', 'active', 1, 20, false, 1)`,
-        [tenant.id]
+         VALUES ($1, 'trial', 'active', $2, $3, $4, $5)`,
+        [tenant.id, t.max_customers, t.max_messages_month, t.managed_ai, t.max_agents]
       );
     }
 
