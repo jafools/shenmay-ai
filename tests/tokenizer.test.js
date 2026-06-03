@@ -668,6 +668,29 @@ test('EMAIL detector still matches multi-label domains after linearization', () 
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 9. Breach-log compliance — scan() findings must NEVER carry the raw PII value
+//    (pii_breach_log is retained for audit; storing the raw value made it a PII
+//    store, contradicting the privacy policy + surviving GDPR erasure).
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\nBreach-log compliance');
+
+test('scan() findings carry only {type,length,offset} — never the raw PII', () => {
+  const findings = scan('SSN 123-45-6789, email alice@example.com, phone 212-555-0199');
+  assert(findings.length > 0, 'expected at least one finding');
+  for (const f of findings) {
+    assert(!('sample' in f), 'findings must NOT carry a raw "sample" field');
+    assert(typeof f.type === 'string', 'finding keeps a type');
+    assert(typeof f.length === 'number' && f.length > 0, 'finding carries a numeric length');
+    assert(typeof f.offset === 'number', 'finding keeps an offset');
+    const serialized = JSON.stringify(f);
+    assertNotContains(serialized, '123-45-6789', 'raw SSN must not appear in a finding');
+    assertNotContains(serialized, 'alice@example.com', 'raw email must not appear in a finding');
+    assertNotContains(serialized, '212-555-0199', 'raw phone must not appear in a finding');
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Summary
 // ═══════════════════════════════════════════════════════════════════════════
 
