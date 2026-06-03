@@ -29,7 +29,7 @@ if (DRY_RUN) {
 }
 
 async function backfill() {
-  let offset         = 0;
+  let lastId         = '00000000-0000-0000-0000-000000000000';
   let totalProcessed = 0;
   let totalEncrypted = 0;
   let totalSkipped   = 0;
@@ -38,14 +38,18 @@ async function backfill() {
   console.log('🔐 Starting soul_file / memory_file encryption backfill...\n');
 
   while (true) {
-    // Fetch a batch — only rows where at least one column has data
+    // Keyset paging (P3-7): `id > lastId` is immune to the row skip/dupe that
+    // OFFSET suffers when rows are inserted/deleted mid-run. Already-encrypted
+    // rows are still fetched (they stay NOT NULL) but skipped in the loop, and
+    // the cursor advances by max id so they're never re-read.
     const { rows } = await db.query(
       `SELECT id, soul_file, memory_file
        FROM customers
-       WHERE soul_file IS NOT NULL OR memory_file IS NOT NULL
+       WHERE (soul_file IS NOT NULL OR memory_file IS NOT NULL)
+         AND id > $1::uuid
        ORDER BY id
-       LIMIT $1 OFFSET $2`,
-      [BATCH_SIZE, offset]
+       LIMIT $2`,
+      [lastId, BATCH_SIZE]
     );
 
     if (rows.length === 0) break;
@@ -97,11 +101,33 @@ async function backfill() {
       }
     }
 
-    offset += BATCH_SIZE;
+    lastId = rows[rows.length - 1].id;   // advance the keyset cursor
 
     // Small pause between batches to avoid hammering the DB
     if (rows.length === BATCH_SIZE) {
       await new Promise(r => setTimeout(r, 50));
+    }
+  }
+
+  // Final verification pass (P3-7): re-scan for any row still holding plaintext
+  // so "complete" can never be a false positive. Cheap on a one-shot script.
+  let unverified = 0;
+  if (!DRY_RUN) {
+    let vId = '00000000-0000-0000-0000-000000000000';
+    while (true) {
+      const { rows: vrows } = await db.query(
+        `SELECT id, soul_file, memory_file FROM customers
+         WHERE (soul_file IS NOT NULL OR memory_file IS NOT NULL) AND id > $1::uuid
+         ORDER BY id LIMIT $2`,
+        [vId, BATCH_SIZE]
+      );
+      if (vrows.length === 0) break;
+      for (const r of vrows) {
+        const soulOk = !r.soul_file   || isEncrypted(r.soul_file);
+        const memOk  = !r.memory_file || isEncrypted(r.memory_file);
+        if (!soulOk || !memOk) unverified++;
+      }
+      vId = vrows[vrows.length - 1].id;
     }
   }
 
@@ -112,11 +138,14 @@ async function backfill() {
   console.log(`  Errors    : ${totalErrors}`);
   console.log('─────────────────────────────────────\n');
 
-  if (totalErrors > 0) {
-    console.error('⚠️  Some rows failed — check the errors above and re-run.');
+  if (totalErrors > 0 || unverified > 0) {
+    console.error(
+      `⚠️  ${totalErrors} row error(s), ${unverified} row(s) still unencrypted — ` +
+      `check the output above and re-run.`
+    );
     process.exit(1);
   } else {
-    console.log('✅ Backfill complete.\n');
+    console.log('✅ Backfill complete + verified.\n');
     process.exit(0);
   }
 }

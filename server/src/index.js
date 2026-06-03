@@ -247,9 +247,16 @@ app.use('/api/public/portal', require('./routes/public-portal'));
 // extremely cheap (single SELECT 1, no pool warm-up work).
 app.get('/api/health', async (req, res) => {
   const db = require('./db');
+  const { getAuditWriteFailures } = require('./middleware/auditLog');
   try {
     await db.query('SELECT 1');
-    res.json({ status: 'ok', service: 'shenmay-ai', timestamp: new Date().toISOString() });
+    res.json({
+      status: 'ok',
+      service: 'shenmay-ai',
+      timestamp: new Date().toISOString(),
+      // P3-4: surface dropped audit writes so ops can alert on compliance-log holes
+      audit_write_failures: getAuditWriteFailures().failures,
+    });
   } catch (err) {
     res.status(503).json({
       status: 'degraded',

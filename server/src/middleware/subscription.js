@@ -174,13 +174,22 @@ async function requireActiveWidgetSubscription(req, res, next) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function incrementMessageCount(tenantId) {
-  await db.query(
+  // Atomic compare-and-set (P3-3): only count while under the cap, so N
+  // concurrent /chat requests can't drive messages_used_this_month past
+  // max_messages_month through the read-then-increment gap (the limit check at
+  // the gate and this increment straddle a multi-second LLM round-trip).
+  // Unrestricted plans always count (stat only). Returns false when the row was
+  // already at its cap so the increment was a no-op — current callers ignore
+  // the result; the value here is the atomicity, not the return.
+  const { rowCount } = await db.query(
     `UPDATE subscriptions
      SET messages_used_this_month = messages_used_this_month + 1,
          updated_at = NOW()
-     WHERE tenant_id = $1`,
-    [tenantId]
+     WHERE tenant_id = $1
+       AND (plan = ANY($2) OR messages_used_this_month < max_messages_month)`,
+    [tenantId, UNRESTRICTED_PLANS]
   );
+  return rowCount > 0;
 }
 
 

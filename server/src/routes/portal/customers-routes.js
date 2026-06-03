@@ -296,21 +296,45 @@ router.post('/upload', async (req, res, next) => {
         await upsert(existing[0].id);
         updated++;
       } else {
-        // Enforce customer limit for new inserts
-        if (!isUnrestricted && maxCustomers !== null && currentCount >= maxCustomers) {
+        const capped = !isUnrestricted && maxCustomers !== null;
+
+        // Cheap in-memory fast-path: this upload alone has already filled the cap.
+        if (capped && currentCount >= maxCustomers) {
           errors.push(`Row ${i + 2}: customer limit reached (${maxCustomers} max) — upgrade your plan to add more`);
           // Fire one-time notification email for trial tenants
           const { sendLimitNotificationIfNeeded } = require('../../middleware/subscription');
           sendLimitNotificationIfNeeded(req.portal.tenant_id);
           continue;
         }
-        const { rows: newCust } = await db.query(
-          `INSERT INTO customers (tenant_id, email, first_name, last_name, external_id, onboarding_status, soul_file)
-           VALUES ($1, $2, $3, $4, $5, 'pending', $6::jsonb)
-           RETURNING id`,
-          [req.portal.tenant_id, email, firstName, lastName, externalId,
-           JSON.stringify(encryptJson(soulTemplate || {}))]
-        );
+
+        // Atomic cap enforcement (P3-2): for capped plans, gate the INSERT on the
+        // LIVE customer count in the same statement, so two concurrent uploads
+        // can't both slip past max_customers (the in-memory counter above can't
+        // see a sibling request's inserts). Uncapped/unrestricted skip the COUNT.
+        const insertSql = capped
+          ? `INSERT INTO customers (tenant_id, email, first_name, last_name, external_id, onboarding_status, soul_file)
+             SELECT $1, $2, $3, $4, $5, 'pending', $6::jsonb
+             WHERE (SELECT COUNT(*) FROM customers
+                      WHERE tenant_id = $1 AND deleted_at IS NULL AND ${anonEmailNotLikeGuard()}) < $7
+             RETURNING id`
+          : `INSERT INTO customers (tenant_id, email, first_name, last_name, external_id, onboarding_status, soul_file)
+             VALUES ($1, $2, $3, $4, $5, 'pending', $6::jsonb)
+             RETURNING id`;
+        const insertParams = [
+          req.portal.tenant_id, email, firstName, lastName, externalId,
+          JSON.stringify(encryptJson(soulTemplate || {})),
+        ];
+        if (capped) insertParams.push(maxCustomers);
+
+        const { rows: newCust } = await db.query(insertSql, insertParams);
+
+        if (newCust.length === 0) {
+          // Lost the race to a concurrent upload — the live cap is now full.
+          errors.push(`Row ${i + 2}: customer limit reached (${maxCustomers} max) — upgrade your plan to add more`);
+          const { sendLimitNotificationIfNeeded } = require('../../middleware/subscription');
+          sendLimitNotificationIfNeeded(req.portal.tenant_id);
+          continue;
+        }
         await upsert(newCust[0].id);
         inserted++;
         currentCount++;
