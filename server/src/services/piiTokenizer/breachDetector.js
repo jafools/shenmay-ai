@@ -13,12 +13,19 @@
 
 const { detectors } = require('./detectors');
 
+// Mirror the tokenizer's per-string cap so the re-scan can't be turned into an
+// event-loop DoS either. In the normal egress path the text reaching here is
+// already tokenizer-bounded; this also protects direct scan() callers (e.g.
+// brand-learning residual-PII scans).
+const MAX_SCAN_INPUT = 128 * 1024;
+
 /**
  * The patterns the breach detector uses. Same as the main detectors, but
  * we deliberately re-scan to catch anything the tokenizer missed.
  */
 function scan(text) {
   if (!text) return [];
+  if (text.length > MAX_SCAN_INPUT) text = text.slice(0, MAX_SCAN_INPUT);
 
   const findings = [];
   for (const d of detectors) {

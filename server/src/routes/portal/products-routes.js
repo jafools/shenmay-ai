@@ -36,6 +36,8 @@ router.get('/', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+const MAX_CSV_UPLOAD_ROWS = 10000;
+
 // POST /api/portal/products/upload  (declared before /:id routes so Express matches it)
 router.post('/upload', async (req, res, next) => {
   try {
@@ -50,6 +52,11 @@ router.post('/upload', async (req, res, next) => {
     }
 
     if (records.length === 0) return res.status(400).json({ error: 'CSV contains no rows' });
+    // Cap bulk rows per upload — bounds per-row DB-write amplification on the
+    // shared pool (mirrors the data API's 1000-record cap, looser for bulk import).
+    if (records.length > MAX_CSV_UPLOAD_ROWS) {
+      return res.status(400).json({ error: `CSV has too many rows (${records.length}). Maximum ${MAX_CSV_UPLOAD_ROWS} per upload — split the file and retry.` });
+    }
 
     let inserted = 0;
     for (const row of records) {

@@ -91,8 +91,15 @@ const detectors = [
   },
   {
     NAME: 'EMAIL',
-    // RFC-5322 pragmatic subset — covers real-world emails without exploding.
-    pattern: /\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b/g,
+    // RFC-5322 pragmatic subset. Every quantifier is BOUNDED so the pattern is
+    // provably linear: the local part (<=64 per RFC 5321) and each domain label
+    // (<=63 per DNS) exclude '.', so a dot-run partitions uniquely with no
+    // ambiguous backtracking. The previous unbounded form
+    //   /\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b/
+    // was quadratic on crafted input like "a@a.a.a.…" — an event-loop DoS via
+    // the always-on tokenizer (the local '+' also backtracks O(n) per start
+    // position when there is no '@', so both sides are bounded here).
+    pattern: /\b[a-zA-Z0-9._%+\-]{1,64}@[a-zA-Z0-9\-]{1,63}(?:\.[a-zA-Z0-9\-]{1,63}){0,16}\.[a-zA-Z]{2,24}\b/g,
     validate: () => true,
   },
   {
