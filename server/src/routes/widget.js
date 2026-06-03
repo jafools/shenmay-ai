@@ -91,7 +91,7 @@ function requireWidgetAuth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Widget session token required' });
 
   try {
-    req.widgetSession = jwt.verify(token, WIDGET_JWT_SECRET);
+    req.widgetSession = jwt.verify(token, WIDGET_JWT_SECRET, { algorithms: ['HS256'] });
     next();
   } catch {
     return res.status(401).json({ error: 'Invalid or expired widget session' });
@@ -415,7 +415,7 @@ router.post('/session/refresh', async (req, res, next) => {
 
     let payload;
     try {
-      payload = jwt.verify(token, WIDGET_JWT_SECRET, { ignoreExpiration: true });
+      payload = jwt.verify(token, WIDGET_JWT_SECRET, { ignoreExpiration: true, algorithms: ['HS256'] });
     } catch {
       return res.status(401).json({ error: 'Invalid widget session token' });
     }
@@ -483,7 +483,7 @@ router.post('/session/claim', async (req, res, next) => {
     // 1. Verify the anonymous session token
     let anonSession;
     try {
-      anonSession = jwt.verify(anon_token, WIDGET_JWT_SECRET);
+      anonSession = jwt.verify(anon_token, WIDGET_JWT_SECRET, { algorithms: ['HS256'] });
     } catch {
       return res.status(401).json({ error: 'Invalid or expired anonymous session token' });
     }
@@ -802,7 +802,7 @@ router.post('/end-session', async (req, res, next) => {
     }
 
     try {
-      payload = jwt.verify(token, WIDGET_JWT_SECRET);
+      payload = jwt.verify(token, WIDGET_JWT_SECRET, { algorithms: ['HS256'] });
     } catch {
       return res.status(401).json({ error: 'Invalid or expired widget session' });
     }

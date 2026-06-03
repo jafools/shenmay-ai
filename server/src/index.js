@@ -123,6 +123,19 @@ const globalLimiter = makeRateLimiter({
   message: { error: 'Too many requests. Please slow down.' },
 });
 
+// /api/auth/detect-tenant returns whether an email maps to a tenant — an
+// account-existence oracle (it powers login-page rebranding). Keep it well
+// below the 150/min global net so it can't be used for bulk enumeration. No
+// env override: nothing calls it at volume (the client doesn't use it today),
+// so a tight fixed cap is safe.
+const detectTenantLimiter = makeRateLimiter({
+  windowMs: 60 * 1000,
+  max:      20,
+  standardHeaders: true,
+  legacyHeaders:   false,
+  message: { error: 'Too many lookups. Please slow down.' },
+});
+
 // ── Security headers (applied before everything except widget routes) ─────────
 // Widget routes AND static widget files are excluded:
 //   - /api/widget/* — widget API endpoints, manage their own permissive CORS
@@ -190,11 +203,20 @@ app.use('/api/portal', require('./routes/portal'));
 
 // Routes — Auth (public, no middleware)
 app.use('/api/auth/login', loginLimiter);
+// /detect-tenant is an email-existence oracle and /register creates accounts —
+// both were previously covered only by the 150/min global net. registerLimiter
+// throttles account creation; detect-tenant gets a dedicated limiter (defined above).
+app.use('/api/auth/register', registerLimiter);
+app.use('/api/auth/detect-tenant', detectTenantLimiter);
 app.use('/api/auth', require('./routes/auth'));
 
 // Routes — Platform Admin (separate auth layer, no tenant scope)
 // Disabled on self-hosted deployments — operators use the tenant dashboard, not platform admin.
 if (!isSelfHosted()) {
+  // Brute-force protection for the highest-privilege login in the system —
+  // platform-admin manages every tenant. Previously only the 150/min global
+  // net applied. Reuses loginLimiter (env-overridable for CI / shared NAT).
+  app.use('/api/platform/auth/login', loginLimiter);
   app.use('/api/platform/auth',     require('./routes/platform/auth'));
   app.use('/api/platform/tenants',  require('./routes/platform/tenants'));
   app.use('/api/platform/licenses', require('./routes/platform/licenses'));

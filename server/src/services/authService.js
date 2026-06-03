@@ -41,7 +41,9 @@ function generateToken(payload) {
  * Returns decoded payload or throws on invalid/expired
  */
 function validateToken(token) {
-  return jwt.verify(token, JWT_SECRET);
+  // Pin the algorithm — never accept whatever the token header declares
+  // (defends against alg-confusion / alg:none should a future key change).
+  return jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
 }
 
 /**
