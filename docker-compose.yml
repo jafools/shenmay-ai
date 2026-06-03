@@ -76,6 +76,7 @@ services:
       GLOBAL_RATE_LIMIT_MAX: ${GLOBAL_RATE_LIMIT_MAX:-150}
       PORTAL_RATE_LIMIT_MAX: ${PORTAL_RATE_LIMIT_MAX:-30}
       REGISTER_RATE_LIMIT_MAX: ${REGISTER_RATE_LIMIT_MAX:-3}
+      LICENSE_TRIAL_RATE_LIMIT_MAX: ${LICENSE_TRIAL_RATE_LIMIT_MAX:-5}
       DATA_API_RATE_LIMIT: ${DATA_API_RATE_LIMIT:-120}
       # PII tokenizer kill-switch — defaults to enabled; set to 'false' or '0'
       # to bypass for debugging. Code path: server/src/services/llmService.js
