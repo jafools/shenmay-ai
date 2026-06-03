@@ -35,6 +35,13 @@ const { detectors } = require('./detectors');
 const { extractNames } = require('./nameExtractor');
 const { scan, scanMessages, BreachError } = require('./breachDetector');
 
+// Hard per-string input cap for the detector sweep. All detectors are bounded/
+// linear, but this is a defense-in-depth backstop so a single pathological
+// outbound payload can never monopolize the single-threaded event loop (ReDoS
+// class). Far above any legitimate prompt/message — the chat path caps user
+// input at 4 KB upstream.
+const MAX_TOKENIZE_INPUT = 128 * 1024;
+
 class Tokenizer {
   /**
    * @param {object} opts
@@ -55,6 +62,10 @@ class Tokenizer {
     if (!text || typeof text !== 'string') return { text, map };
 
     let out = text;
+    if (out.length > MAX_TOKENIZE_INPUT) {
+      console.warn(`[piiTokenizer] outbound string ${out.length} bytes exceeds ${MAX_TOKENIZE_INPUT}-byte cap; truncating before detector sweep`);
+      out = out.slice(0, MAX_TOKENIZE_INPUT);
+    }
 
     // Pass 1: structured name pseudonymization (longest-first).
     for (const hint of this._nameHints) {

@@ -632,6 +632,42 @@ test('Free-text description with staff email still passes breach audit after tok
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 8. ReDoS / input-length safety — the EMAIL detector must be linear and the
+//    tokenizer must bound per-string work. Regression guard for the P1 event-
+//    loop DoS (a crafted "a@a.a.a.…" string froze the always-on tokenizer for
+//    minutes via quadratic backtracking).
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\nReDoS / input-length safety');
+
+test('EMAIL detector is linear on pathological dot-run input (<500ms, under the length cap)', () => {
+  const t = new Tokenizer();
+  // ~80 KB of ambiguous "a." runs after an @ — UNDER the 128 KB length backstop,
+  // so this exercises the regex's own linearity, not the truncation guard. The
+  // pre-fix unbounded pattern took multiple seconds here (quadratic).
+  const evil = 'a@' + 'a.'.repeat(40000);
+  const start = process.hrtime.bigint();
+  t.tokenize(evil);
+  const ms = Number(process.hrtime.bigint() - start) / 1e6;
+  assert(ms < 500, `tokenize() took ${ms.toFixed(0)}ms on ~80KB pathological input — expected <500ms (ReDoS regression)`);
+});
+
+test('tokenize() truncates pathologically large input (length backstop)', () => {
+  const t = new Tokenizer();
+  const huge = 'x'.repeat(200 * 1024); // 200 KB benign blob, over the 128 KB cap
+  const { text } = t.tokenize(huge);
+  assert(text.length < huge.length, 'expected oversized input to be truncated by the length backstop');
+  assert(text.length <= 128 * 1024, `expected truncation to <=128KB, got ${text.length}`);
+});
+
+test('EMAIL detector still matches multi-label domains after linearization', () => {
+  const t = new Tokenizer();
+  const { text, map } = t.tokenize('reach me at jo.smith@mail.corp.example.co.uk anytime');
+  assertNotContains(text, 'jo.smith@mail.corp.example.co.uk');
+  assert(map.stats().byType.EMAIL >= 1, 'multi-label email should still tokenize as EMAIL');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Summary
 // ═══════════════════════════════════════════════════════════════════════════
 

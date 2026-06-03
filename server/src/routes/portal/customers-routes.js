@@ -111,9 +111,21 @@ Sample values may be redacted to opaque tokens like [EMAIL_N], [SSN_N], [PHONE_N
 [CC_N], [ACCOUNT_N], [DOB_N], [POSTCODE_N], [IBAN_N], [PERSON_N] — the token name
 tells you what kind of data the column holds and is a strong mapping signal.`;
 
+    // Bound what we stringify into the prompt: cap header count/length and each
+    // sample cell, so a pathological CSV cell can't build a giant payload
+    // (defense-in-depth alongside the tokenizer's own length backstop).
+    const safeHeaders = headers.slice(0, 100).map(h => String(h).slice(0, 100));
+    const safeRows = (Array.isArray(sample_rows) ? sample_rows.slice(0, 3) : []).map(row => {
+      if (!row || typeof row !== 'object') return {};
+      const out = {};
+      for (const k of Object.keys(row).slice(0, 60)) {
+        out[String(k).slice(0, 100)] = String(row[k] ?? '').slice(0, 500);
+      }
+      return out;
+    });
     const userPrompt = `Map these CSV columns to customer record fields.
-Columns: ${JSON.stringify(headers)}
-Sample data (first few rows): ${JSON.stringify(sample_rows?.slice(0, 3) || [])}`;
+Columns: ${JSON.stringify(safeHeaders)}
+Sample data (first few rows): ${JSON.stringify(safeRows)}`;
 
     let rawText;
     try {
@@ -172,6 +184,8 @@ Sample data (first few rows): ${JSON.stringify(sample_rows?.slice(0, 3) || [])}`
 // Accepts { csv, mapping? }
 // mapping: { "CSV Column Name": "our_field" } — from ai-map or user-confirmed
 // If no mapping provided, falls back to guessing by common column name variants.
+const MAX_CSV_UPLOAD_ROWS = 10000;
+
 router.post('/upload', async (req, res, next) => {
   try {
     const { csv, mapping } = req.body;
@@ -184,6 +198,12 @@ router.post('/upload', async (req, res, next) => {
       return res.status(400).json({ error: 'Could not parse CSV — check the file format' });
     }
     if (records.length === 0) return res.status(400).json({ error: 'CSV contains no rows' });
+    // Cap bulk rows per upload — bounds the per-row DB-write amplification a
+    // single 10 MB upload could otherwise cause on the shared pool (mirrors the
+    // data API's 1000-record cap, looser here for bulk onboarding).
+    if (records.length > MAX_CSV_UPLOAD_ROWS) {
+      return res.status(400).json({ error: `CSV has too many rows (${records.length}). Maximum ${MAX_CSV_UPLOAD_ROWS} per upload — split the file and retry.` });
+    }
 
     // Load subscription and current customer count to enforce limits
     const sub = await getSubscription(req.portal.tenant_id);
