@@ -30,6 +30,7 @@
 
 const db = require('../../db');
 const { canonicalKey } = require('./promote');
+const { quickScanForResidualPii } = require('./scrub');
 
 // OpenAI client lazy-loaded inside the embed function so cosineSimilarity
 // + the table helpers stay test-friendly without the `openai` SDK
@@ -243,6 +244,18 @@ async function mergeBucketPure({
     if (!key) { out.skipped++; continue; }
 
     if (existingTexts.has(key)) { out.skipped++; continue; }
+
+    // Outbound PII gate (defense-in-depth). embedFn is a network egress to a
+    // third party (OpenAI). This candidate is the distiller's OUTPUT — the one
+    // thing in this pipeline that has NOT yet been through the worker's Layer-3
+    // outbound audit (quickScanForResidualPii runs only after promotion). If a
+    // residual-PII pattern survived Layers 1-2 into this candidate, withhold it
+    // from the embedding call rather than disclosing it. Fail-soft + per
+    // candidate: the v3.5.3 token-overlap heuristic in promote.js still dedups
+    // it locally, and the worker's Layer-3 scan still blocks it from being
+    // stored. (Closes the v3.5.8-sweep finding: embed pre-pass egressed
+    // un-re-audited text to OpenAI before the Layer-3 scan.)
+    if (quickScanForResidualPii(text).length > 0) { out.skipped++; continue; }
 
     const queryEmbedding = await embedFn(text);
     if (!Array.isArray(queryEmbedding) || queryEmbedding.length === 0) { out.errors++; continue; }

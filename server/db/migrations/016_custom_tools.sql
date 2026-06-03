@@ -56,7 +56,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_custom_tools_updated_at
+CREATE OR REPLACE TRIGGER trg_custom_tools_updated_at
   BEFORE UPDATE ON custom_tools
   FOR EACH ROW
   EXECUTE FUNCTION update_custom_tools_updated_at();

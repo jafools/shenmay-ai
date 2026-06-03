@@ -1063,6 +1063,25 @@ test('mergeBucketPure: embedFn returning null counts as error, no rewrite, no in
   assertEqual(r.inserted, 0);
 });
 
+test('mergeBucketPure: candidate with residual PII is withheld from the embed call (outbound PII gate)', async () => {
+  let embedCalls = 0;
+  const seen = [];
+  const embedFn = async (text) => { embedCalls++; seen.push(text); return [0, 1, 0]; };
+  const candidates = [
+    { question: 'What are your opening hours?' },                // clean → embedded
+    { question: 'Please email me at sneaky@example.com today' },  // residual PII → withheld
+  ];
+  const r = await mergeBucketPure({
+    candidates, textField: 'question',
+    existingTexts: new Map(), stored: [], embedFn,
+  });
+  // The PII-bearing candidate must never reach the third-party embed provider.
+  assertEqual(embedCalls, 1, 'only the clean candidate should reach the embed provider');
+  assertEqual(seen.some(t => t.includes('sneaky@example.com')), false, 'PII candidate must not be sent to OpenAI');
+  assertEqual(r.inserted, 1, 'clean candidate queued for insertion');
+  assertEqual(r.skipped, 1, 'PII candidate withheld (counted as skipped)');
+});
+
 test('mergeBucketPure: textField=null works for bare-string candidates (voice_cues, audience)', async () => {
   const embedFn = async (text) => {
     if (text === 'be concise') return [1, 0, 0];
