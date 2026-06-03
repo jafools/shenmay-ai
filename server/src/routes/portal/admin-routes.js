@@ -11,7 +11,7 @@
 
 const router = require('express').Router();
 const db = require('../../db');
-const { VALID_ADMIN_PLANS } = require('../../config/plans');
+const { VALID_ADMIN_PLANS, PLAN_LIMITS } = require('../../config/plans');
 
 // PUT /api/portal/admin/profile — update admin's own name
 // Body: { first_name?: string, last_name?: string }
@@ -83,21 +83,14 @@ router.post('/set-plan', async (req, res, next) => {
       return res.status(400).json({ error: `plan must be one of: ${VALID_ADMIN_PLANS.join(', ')}` });
     }
 
-    // Plan defaults (can be overridden by body params)
-    const planDefaults = {
-      free:         { max_customers: 1,     max_messages_month: 20,    managed_ai_enabled: false },
-      trial:        { max_customers: 1,     max_messages_month: 20,    managed_ai_enabled: false },
-      starter:      { max_customers: 50,    max_messages_month: 1000,  managed_ai_enabled: false },
-      growth:       { max_customers: 250,   max_messages_month: 5000,  managed_ai_enabled: false },
-      professional: { max_customers: 1000,  max_messages_month: 25000, managed_ai_enabled: false },
-      enterprise:   { max_customers: null,  max_messages_month: null,  managed_ai_enabled: true  },
-      master:       { max_customers: null,  max_messages_month: null,  managed_ai_enabled: true  },
-    };
-
-    const defaults = planDefaults[plan];
+    // Plan defaults come from the single source of truth (PLAN_LIMITS) so the
+    // trial 1/20 → 3/50 drift can't reappear here, and so SaaS plans default to
+    // managed_ai=false (pure BYOK, v3.3.27). Any field is still overridable
+    // per-request by the master operator via the body params below.
+    const defaults = PLAN_LIMITS[plan];
     const finalMaxCustomers = max_customers !== undefined ? max_customers : defaults.max_customers;
     const finalMaxMessages  = max_messages_month !== undefined ? max_messages_month : defaults.max_messages_month;
-    const finalManagedAI    = managed_ai_enabled !== undefined ? managed_ai_enabled : defaults.managed_ai_enabled;
+    const finalManagedAI    = managed_ai_enabled !== undefined ? managed_ai_enabled : defaults.managed_ai;
 
     await db.query(
       `UPDATE subscriptions SET
