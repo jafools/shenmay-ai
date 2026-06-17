@@ -200,7 +200,7 @@ router.post('/customers', requireDataApiKey, async (req, res, next) => {
     const { rows } = await db.query(
       `INSERT INTO customers (tenant_id, external_id, name, email, phone, metadata, soul_file)
        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)
-       ON CONFLICT (tenant_id, external_id)
+       ON CONFLICT (tenant_id, external_id) WHERE external_id IS NOT NULL
        DO UPDATE SET
          name     = EXCLUDED.name,
          email    = COALESCE(EXCLUDED.email, customers.email),
