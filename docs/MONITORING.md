@@ -40,6 +40,29 @@ failing both the status-code check and the keyword check. Previously the
 endpoint was a hardcoded 200 and could not see a disconnected DB — the
 monitor only caught hard crashes of the backend process or nginx.
 
+#### Health counters on `/api/health` (alert on a healthy-DB failure mode)
+
+The healthy response also carries two cumulative-since-boot counters so a
+500-spike or dropped-compliance-write is visible even when the DB is fine and
+every uptime monitor is green:
+
+```json
+{ "status": "ok", "service": "shenmay-ai",
+  "audit_write_failures": 0,   // dropped audit-log writes (P3-4)
+  "http_5xx_total": 0 }        // 5xx responses since boot (T10/M12)
+```
+
+`http_5xx_total` is counted at **response finish**, so it includes the
+route-level `res.status(500)` paths that bypass the central error handler. It
+resets to 0 on restart (it's an in-process counter, not a persisted metric).
+
+To alert on it with the free UptimeRobot tier, add a second keyword monitor on
+the same URL with **Keyword Type `not exists`, Keyword `"http_5xx_total":0`** —
+it fires the moment the counter leaves zero (i.e. the first 5xx after a boot).
+Early on that's a useful "something just threw" tripwire; once volume grows,
+move to a scrape that computes a rate (see *Future* below). The same trick works
+for `"audit_write_failures":0`.
+
 ### Monitor 2 — apex marketing-to-app redirect
 
 | Field | Value |
@@ -213,9 +236,16 @@ Out of scope for solo-dev launch. Worth considering once customer count > ~10:
   regressions, not just infra. The nightly `e2e-repeatability.yml` cron is
   the staging-facing version; a 2-hourly prod-facing subset would be next.
 - **Prometheus + Grafana:** the self-hosted option. Overkill for one Hetzner
-  CPX22 but standard once there are multiple tenants with different SLAs.
-- **Backend error-rate alerts:** instrument the error handler to count 5xx
-  responses and alert if rate > N/minute.
+  CPX22 but standard once there are multiple tenants with different SLAs. The
+  `http_5xx_total` counter on `/api/health` is the natural first scrape target
+  for a proper error-*rate* alert (vs. the leave-zero tripwire above).
+- **Backend error tracking (done, T10):** request-correlation IDs (`X-Request-Id`
+  on every response; structured pino logs carry the id), a response-finish
+  `http_5xx_total` counter on `/api/health`, and DSN-gated Sentry in the error +
+  process-crash handlers. Sentry is **off unless `SENTRY_DSN` is set** — SaaS
+  sets its own DSN; self-hosted installs send nothing by default. To diagnose a
+  specific failure, grep the backend logs for the request id from the customer's
+  `X-Request-Id` response header.
 
 None of these are needed today. The three UptimeRobot monitors above close
 the "customer tells me first" gap.

@@ -9,20 +9,29 @@ const path    = require('path');
 
 const { securityHeaders, portalCors } = require('./middleware/security');
 const { isSelfHosted, DEPLOYMENT_MODES } = require('./config/plans');
+const { log } = require('./utils/logger');
+const { initSentry, captureError, captureFatal } = require('./utils/sentry');
+const { requestContext, getHttp5xx } = require('./middleware/requestContext');
+
+// Initialise error tracking as early as possible. No-op unless SENTRY_DSN is set
+// (self-hosted installs stay silent — see utils/sentry.js / task T10).
+initSentry();
 
 // ── Crash safety net ────────────────────────────────────────────────────────────
 // A rejected promise that escapes a handler (e.g. an unwrapped async route or
 // middleware hitting a transient DB error) would otherwise terminate the process
 // under Node's default unhandled-rejection policy with no diagnosable trace. Log
-// it with a stack, then exit non-zero so the container's restart policy brings up
-// a clean replica rather than continuing from an unknown state.
+// it with a stack, report it (Sentry, when enabled — flushed before exit), then
+// exit non-zero so the container's restart policy brings up a clean replica
+// rather than continuing from an unknown state.
 process.on('unhandledRejection', (reason) => {
-  console.error('[FATAL] Unhandled promise rejection:', reason && reason.stack ? reason.stack : reason);
-  process.exit(1);
+  const err = reason instanceof Error ? reason : new Error(`Unhandled rejection: ${reason}`);
+  console.error('[FATAL] Unhandled promise rejection:', err.stack || err);
+  captureFatal(err, () => process.exit(1));
 });
 process.on('uncaughtException', (err) => {
   console.error('[FATAL] Uncaught exception:', err && err.stack ? err.stack : err);
-  process.exit(1);
+  captureFatal(err, () => process.exit(1));
 });
 
 // ── Startup secret validation ──────────────────────────────────────────────────
@@ -65,6 +74,11 @@ const PORT = process.env.PORT || 3001;
 // Trust the first proxy (Cloudflare Tunnel adds X-Forwarded-For)
 // Required for express-rate-limit to correctly identify client IPs
 app.set('trust proxy', 1);
+
+// Request correlation + 5xx counter. First middleware so every request (incl.
+// webhooks + static assets) gets a request id, an X-Request-Id header, and an
+// AsyncLocalStorage context that correlates downstream log() lines (task T10).
+app.use(requestContext);
 
 // ── Rate limiting ─────────────────────────────────────────────────────────────
 // Helper extracted to ./middleware/rate-limit.js so widget.js can use the same
@@ -179,11 +193,8 @@ app.use(express.json({ limit: '10mb' }));
 // Serve embed.js and widget.html from /server/public (cross-origin OK — handled per-route)
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-// Request logging
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
-  next();
-});
+// Request logging is handled by requestContext (registered above) — it logs a
+// structured summary at response finish with the request id, status, and latency.
 
 // Global safety net (applied before all routes)
 app.use(globalLimiter);
@@ -271,6 +282,11 @@ app.get('/api/health', async (req, res) => {
       timestamp: new Date().toISOString(),
       // P3-4: surface dropped audit writes so ops can alert on compliance-log holes
       audit_write_failures: getAuditWriteFailures().failures,
+      // T10/M12: total 5xx responses since boot — lets an external monitor alert
+      // on a 500-spike that leaves the DB healthy (counted at response finish, so
+      // the 12 route-level res.status(500) calls that bypass the error handler
+      // are included).
+      http_5xx_total: getHttp5xx(),
     });
   } catch (err) {
     res.status(503).json({
@@ -304,13 +320,15 @@ app.get('/api/config', (req, res) => {
 // Error handler — never expose internal details in production
 app.use((err, req, res, next) => {
   const status = err.status || 500;
-  // For 5xx, log full context (method, url, stack) so we can diagnose intermittent
-  // failures. 4xx errors are expected/intentional, so a single-line log is enough.
+  const meta = { requestId: req.id, method: req.method, url: req.originalUrl, status };
+  // For 5xx, log full context (incl. stack) so intermittent failures are
+  // diagnosable, and report to Sentry (no-op unless enabled). 4xx errors are
+  // expected/intentional, so a single structured line is enough.
   if (status >= 500) {
-    console.error(`[ERROR] ${status} ${req.method} ${req.originalUrl} — ${err.message}`);
-    if (err.stack) console.error(err.stack);
+    log().error({ ...meta, err: err.stack || err.message }, 'request error');
+    captureError(err, meta);
   } else {
-    console.error(`[ERROR] ${status} ${req.method} ${req.originalUrl} — ${err.message}`);
+    log().warn({ ...meta, message: err.message }, 'request error');
   }
   // Only surface the original message for expected, intentional errors (4xx).
   // For unexpected server errors, send a generic message to avoid leaking internals.

@@ -115,6 +115,12 @@ services:
       LLM_BRAND_LEARNING_EMBED_MODEL: ${LLM_BRAND_LEARNING_EMBED_MODEL:-text-embedding-3-small}
       PORTAL_URL: ${PORTAL_URL:-https://shenmay.ai}
       SHENMAY_LICENSE_MASTER: ${SHENMAY_LICENSE_MASTER:-true}
+      # ── Observability (task T10) ──────────────────────────
+      # Error tracking. Leave unset to disable (Sentry never initialises).
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      # pino log level; blank falls through to the code default
+      # (info in production, debug otherwise).
+      LOG_LEVEL: ${LOG_LEVEL:-}
     ports:
       - "3001:3001"
     depends_on:
