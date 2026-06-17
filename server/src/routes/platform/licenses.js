@@ -6,6 +6,7 @@
  * GET    /api/platform/licenses/:id         — Get license detail
  * PATCH  /api/platform/licenses/:id/revoke  — Revoke a license
  * PATCH  /api/platform/licenses/:id/reactivate — Reactivate a revoked license
+ * PATCH  /api/platform/licenses/:id/unbind  — Clear/transfer the instance binding
  * DELETE /api/platform/licenses/:id         — Hard-delete (use revoke instead)
  *
  * All routes require platform admin auth.
@@ -119,6 +120,40 @@ router.patch('/:id/reactivate', async (req, res, next) => {
     const { rows } = await db.query(
       `UPDATE licenses SET is_active = TRUE WHERE id = $1 RETURNING *`,
       [req.params.id]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'License not found' });
+    res.json({ license: rows[0] });
+  } catch (err) { next(err); }
+});
+
+// PATCH /:id/unbind — clear (or transfer) the instance binding.
+//
+// The license master binds a key to the first instance_id that validates and
+// rejects any mismatch ("License key is already bound … Contact support to
+// transfer"). This is the admin-only transfer path (NOT self-serve): use it for
+// legitimate server moves or domain changes that produced a new instance id.
+//
+//   * No body / { instance_id: null }  → clears the binding; the NEXT instance
+//     that validates re-binds the key to itself.
+//   * { instance_id: "<id>" }          → transfers the binding directly to a
+//     known id (that exact instance must then validate to succeed).
+//
+// last_ping_at is reset so the dashboard/list clearly shows the key is awaiting
+// its next bind rather than still reporting the old instance's last heartbeat.
+router.patch('/:id/unbind', async (req, res, next) => {
+  try {
+    const newInstanceId =
+      req.body && typeof req.body.instance_id === 'string' && req.body.instance_id.trim()
+        ? req.body.instance_id.trim()
+        : null;
+
+    const { rows } = await db.query(
+      `UPDATE licenses
+          SET instance_id  = $1,
+              last_ping_at = NULL
+        WHERE id = $2
+        RETURNING *`,
+      [newInstanceId, req.params.id]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'License not found' });
     res.json({ license: rows[0] });

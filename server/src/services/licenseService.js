@@ -45,19 +45,68 @@ const VALIDATE_URL = envVar('LICENSE_VALIDATE_URL',
 
 const HEARTBEAT_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
-// Stable identifier for this server process.
-// Override with SHENMAY_INSTANCE_ID for consistency across restarts.
-const INSTANCE_ID = envVar('INSTANCE_ID')
-  || crypto.createHash('sha256')
-       .update(
-         (envVar('LICENSE_KEY') || '') +
-         (process.env.APP_URL   || '') +
-         process.pid.toString()
-       )
-       .digest('hex')
-       .slice(0, 16);
-
+// Stable identifier for this self-hosted install, resolved lazily and cached.
+//
+// Precedence:
+//   1. SHENMAY_INSTANCE_ID env pin — operator-controlled, absolute. Lets an
+//      operator carry one id across server moves, or pin it in air-gapped setups.
+//   2. Persisted random id (instance_identity table, migration 045) — generated
+//      ONCE on first boot and reused across restarts AND domain changes.
+//
+// Why not derive it from LICENSE_KEY/APP_URL/process.pid (the pre-T9 formula)?
+// process.pid changes every restart (node isn't PID 1 under the `migrate &&
+// server` shell CMD) and APP_URL changes when an operator goes live — both
+// rebind against the master and hard-lock the customer in a crash-loop (audit
+// M4). A persisted random id is stable for the life of the install while staying
+// unique per install: a key copied to a *fresh* DB gets a new id, so the master
+// still rejects the second instance and a deliberate move goes through the
+// admin-only unbind endpoint (see docs/RUNBOOK-LICENSE-REBIND.md).
 let _heartbeatTimer = null;
+let _instanceIdCache = null;
+
+/**
+ * Resolve this install's stable instance id (see precedence above). Cached after
+ * the first successful resolution. Only ever called on the self-hosted path
+ * (checkLicenseOnStartup / scheduleHeartbeat / activateLicense), where the DB and
+ * migration 045 are already up.
+ * @returns {Promise<string>}
+ */
+async function getInstanceId() {
+  if (_instanceIdCache) return _instanceIdCache;
+
+  const pinned = envVar('INSTANCE_ID');
+  if (pinned) {
+    _instanceIdCache = pinned;
+    return _instanceIdCache;
+  }
+
+  try {
+    const db = require('../db');
+    // Get-or-create the single identity row. The DO UPDATE (no-op self-assign)
+    // makes RETURNING yield the existing id on conflict, so concurrent first
+    // boots converge on one value without a second round-trip.
+    const generated = crypto.randomBytes(16).toString('hex').slice(0, 16);
+    const { rows } = await db.query(
+      `INSERT INTO instance_identity (id, instance_id)
+            VALUES (1, $1)
+       ON CONFLICT (id) DO UPDATE SET instance_id = instance_identity.instance_id
+         RETURNING instance_id`,
+      [generated]
+    );
+    _instanceIdCache = rows[0].instance_id;
+    return _instanceIdCache;
+  } catch (err) {
+    // DB unreachable, or 045 not yet applied (e.g. `node server` run without
+    // migrating on a dev box). Degrade to a key-derived, restart-stable id so we
+    // never crash on identity resolution alone and never churn the bind. NOT
+    // cached, so the next call retries the DB and picks up the persisted random.
+    console.warn(`[License] Could not read persisted instance id (${err.message}); using key-derived fallback.`);
+    return crypto.createHash('sha256')
+      .update(envVar('LICENSE_KEY') || '')
+      .digest('hex')
+      .slice(0, 16);
+  }
+}
 
 // ── HTTP helper ────────────────────────────────────────────────────────────────
 
@@ -116,7 +165,7 @@ function post(url, body) {
 async function callValidate(licenseKey) {
   const { status, body } = await post(VALIDATE_URL, {
     license_key: licenseKey,
-    instance_id: INSTANCE_ID,
+    instance_id: await getInstanceId(),
   });
 
   // Narrow the validated-response shape before returning — everything else
@@ -272,7 +321,7 @@ async function checkLicenseOnStartup() {
   }
 
   // ── Paid mode ────────────────────────────────────────────────────────────
-  console.log(`[License] Validating license key from ${keySource} (instance ${INSTANCE_ID})…`);
+  console.log(`[License] Validating license key from ${keySource} (instance ${await getInstanceId()})…`);
   try {
     const result = await callValidate(licenseKey);
     const expiry = result.expires_at
@@ -418,5 +467,5 @@ module.exports = {
   activateLicense,
   deactivateLicense,
   getLicenseStatus,
-  INSTANCE_ID,
+  getInstanceId,
 };

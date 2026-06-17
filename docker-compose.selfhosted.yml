@@ -121,7 +121,11 @@ services:
       # Purchase a paid license at: https://pontensolutions.com/shenmay/license
       # After purchase, paste your key in .env and restart the backend.
       SHENMAY_LICENSE_KEY: ${SHENMAY_LICENSE_KEY:-}
-      # Optional: stable identifier for this instance across restarts.
+      # Optional: pin a stable identifier for this instance's license binding.
+      # Leave blank — a stable random id is generated and persisted on first boot,
+      # so restarts and domain changes no longer rebind. Set this only if you want
+      # one id to follow the install across server moves (see
+      # docs/RUNBOOK-LICENSE-REBIND.md).
       SHENMAY_INSTANCE_ID: ${SHENMAY_INSTANCE_ID:-}
     ports:
       - "127.0.0.1:3001:3001"
