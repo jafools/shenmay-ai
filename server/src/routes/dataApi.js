@@ -31,6 +31,7 @@ const router = require('express').Router();
 const db     = require('../db');
 const crypto = require('crypto');
 const { encryptJson } = require('../services/cryptoService');
+const { getSubscription, isWithinCustomerLimit } = require('../middleware/subscription');
 
 // ── Per-key rate limiting ──────────────────────────────────────────────────────
 // Tracks request counts per API key prefix in memory.
@@ -168,6 +169,26 @@ router.post('/customers', requireDataApiKey, async (req, res, next) => {
 
     if (!external_id) return res.status(400).json({ error: 'external_id is required' });
     if (!name)        return res.status(400).json({ error: 'name is required' });
+
+    // Plan customer-cap enforcement. Only NET-NEW customers count against the
+    // limit — an update to an existing external_id always passes. This mirrors
+    // the widget + CSV ingress (same isWithinCustomerLimit helper, so the count
+    // — non-anon, non-deleted — and the unrestricted-plan bypass match exactly),
+    // grandfathers any tenant already over cap, and closes the bypass where the
+    // Data API could provision unlimited customers past the plan tier.
+    const { rows: existing } = await db.query(
+      `SELECT 1 FROM customers WHERE tenant_id = $1 AND external_id = $2`,
+      [req.tenantId, external_id]
+    );
+    if (existing.length === 0) {
+      const sub = await getSubscription(req.tenantId);
+      if (sub && !(await isWithinCustomerLimit(sub))) {
+        return res.status(403).json({
+          error: 'customer_limit_reached',
+          detail: `Your plan's customer limit (${sub.max_customers}) has been reached. Upgrade your plan or remove customers to add more.`,
+        });
+      }
+    }
 
     // Fetch soul template to seed new customer soul_file
     const { rows: tRows } = await db.query(

@@ -624,6 +624,45 @@ async function runTests() {
       assert(res.status !== 403, `Expected anything but 403, got ${res.status}`);
     });
 
+    await test('Data API POST /customers enforces the plan customer cap (audit M2)', async () => {
+      let bcrypt;
+      try { bcrypt = require(path.resolve(__dirname, '..', 'server', 'node_modules', 'bcryptjs')); }
+      catch { bcrypt = require(path.resolve(__dirname, '..', 'server', 'node_modules', 'bcrypt')); }
+      const pool = getPool();
+
+      // Seed a capped tenant (starter plan, max_customers = 2) + a known Data API key.
+      const apiKey = 'shenmay_da_capt0123456789abcdefghij';
+      const prefix = apiKey.slice(0, 19); // 'shenmay_da_' (11) + first 8 of the tail
+      const hash   = await bcrypt.hash(apiKey, 10);
+      const { rows: tRows } = await pool.query(
+        `INSERT INTO tenants (name, slug, data_api_key_hash, data_api_key_prefix)
+         VALUES ('Cap Test Co', $1, $2, $3) RETURNING id`,
+        [`cap-test-${Date.now()}`, hash, prefix]
+      );
+      const tenantId = tRows[0].id;
+      await pool.query(
+        `INSERT INTO subscriptions (tenant_id, plan, status, max_customers, max_messages_month)
+         VALUES ($1, 'starter', 'active', 2, 1000)`,
+        [tenantId]
+      );
+
+      const create = (external_id, name) =>
+        post(saasUrl, '/api/v1/customers', { external_id, name }, apiKey);
+
+      // Two net-new customers fit under the cap of 2.
+      assert((await create('cust-1', 'Alice')).status === 201, '1st create should be 201');
+      assert((await create('cust-2', 'Bob')).status === 201, '2nd create should be 201');
+
+      // Third NET-NEW create is over cap → 403 customer_limit_reached.
+      const r3 = await create('cust-3', 'Carol');
+      assert(r3.status === 403, `3rd create should be 403 (cap), got ${r3.status}`);
+      assert(r3.body.error === 'customer_limit_reached', `expected customer_limit_reached, got ${JSON.stringify(r3.body)}`);
+
+      // An UPDATE to an EXISTING external_id still passes at cap (grandfathered).
+      const rUpd = await create('cust-1', 'Alice Updated');
+      assert(rUpd.status === 201, `update at cap should pass (201), got ${rUpd.status}`);
+    });
+
     await stopServer(saasProc);
     saasProc = null;
   } catch (err) {
