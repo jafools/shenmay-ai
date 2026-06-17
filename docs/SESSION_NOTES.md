@@ -5,6 +5,30 @@
 
 ---
 
+## Last updated: 2026-06-17 — **Audit fix-sprint: Milestone 0 done + Milestone 1 5/6, all merged to main (NOT yet released)**
+
+Implementation pass on the **2026-06-10 principal audit** (47-agent ultracode audit; B+, 1 High + 14 Medium). Tracker of record: **`docs/AUDIT-2026-06-10.md`** (every finding → task → status). Worked it as milestone-ordered fix-PRs, each branch → PR → CI → squash-merge.
+
+### Merged to `main` this session (→ `:edge`/staging only; no customer release yet)
+- **[#217](https://github.com/jafools/shenmay-ai/pull/217)** (M0/T1+T2): `tests/brand-learning.test.js` had a **sync runner with 8 async test bodies** → 8 phantom passes (incl. the outbound PII-egress gate). Rewrote to a collect-then-run async runner. + `tests/integration.test.js` now **fails loudly** on a skipped mode-block / missing DB (was exiting 0).
+- **[#218](https://github.com/jafools/shenmay-ai/pull/218)** (M0/T3): new **`tests/engine.test.js`** — 58 tests for promptBuilder, memoryUpdater, cryptoService, apiKeyService, llmService (the ~2,900-line zero-coverage core).
+- **[#219](https://github.com/jafools/shenmay-ai/pull/219)** (M1/T4+T6+T8): crash-proofed the Data-API auth middleware (unwrapped `await` → process-killing rejection) + process-level rejection handlers; GDPR — scrub `conversations.summary`/`topics_covered` on Art-17 erasure; `npm audit fix` (server **0 vulns**).
+- **[#220](https://github.com/jafools/shenmay-ai/pull/220)** (M1/T7): **Node 20→22** (EOL 2026-04-30) — both Dockerfiles + 6 CI refs + `engines` + Dependabot docker ecosystem. Full stack builds+tests on 22.
+- **[#221](https://github.com/jafools/shenmay-ai/pull/221)** (M1/T5): Data-API plan customer-cap gate (reuses `isWithinCustomerLimit`; updates-pass / new-creates-403 / grandfather-over-cap). **Its test surfaced that `POST /api/v1/customers` never worked** (zero coverage): missing `customers.metadata` column → **migration 044**; bare `ON CONFLICT (tenant_id, external_id)` didn't match the **partial** unique index from mig 007 → named the predicate.
+
+### Open / next
+- **Milestone 1 remaining: T9** — license instance-rebind. Approach **pre-approved**: drop `process.pid` from the `INSTANCE_ID` hash (stops auto-rebind), add a platform-admin unbind/transfer endpoint, write the `SHENMAY_INSTANCE_ID` pin + support runbook. **Sensitive (license enforcement), not locally testable** — do it carefully.
+- **Milestone 2:** T10 observability (request IDs + 5xx counter on `/api/health` + DSN-gated Sentry), T11 widget.js refactor (extract session-provisioning + `chatService`), T12 migration advisory lock, T13 `conversations.last_message_at` denormalized index, T14 LLM history budget.
+- **Milestone 3:** docs/polish (README version, archive stale root docs, retention pruning, e2e de-flake, client vitest seeds).
+- **New follow-up found:** `isWithinCustomerLimit` doesn't count NULL-email customers (`NULL NOT ILIKE`), so an email-less Data-API customer dodges the cap — minor, shared-helper change, deferred (tracker has it).
+- **To release any of this to customers:** tag `vX.Y.Z` + dispatch the 5×5 gate + Hetzner deploy. Migration 044 will auto-apply on backend boot.
+- Housekeeping: junk untracked files in the tree (`E2E`, `f.severity`, `0)`, `{,+`, etc. — misfired-shell artifacts) — safe to `rm`.
+
+### Decisions locked
+T5 cap = updates-pass/new-403/grandfather. T9 = admin-unbind endpoint (not self-serve). BEHIND PRs merged via `gh pr merge --admin` (green + disjoint).
+
+---
+
 ## Last updated: 2026-06-03 (PM/3) — **v3.6.2 LIVE** — recovered a dead session + finished the R2 security-sweep P3 tail; whole sweep now shipped
 
 This session opened as a *"where did my session go??"* recovery. The prior session
