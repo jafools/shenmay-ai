@@ -1,0 +1,20 @@
+-- ============================================================
+-- 044 — customers.metadata column
+-- ============================================================
+--
+-- The Data API (POST /api/v1/customers) and docs/DATA-API.md have always
+-- referenced a `metadata` field on customers:
+--
+--     INSERT INTO customers (..., metadata, ...) VALUES (..., $6::jsonb, ...)
+--       ON CONFLICT (tenant_id, external_id)
+--       DO UPDATE SET metadata = COALESCE(EXCLUDED.metadata::jsonb, customers.metadata)
+--
+-- ...but no migration ever created the column, so EVERY Data-API customer
+-- create/update failed with `column "metadata" of relation "customers" does
+-- not exist`. The endpoint had zero test coverage, so this stayed latent until
+-- the cap-enforcement integration test exercised it.
+--
+-- JSONB to match the INSERT's ::jsonb cast and the documented `{ ... }` shape.
+-- ADD COLUMN IF NOT EXISTS is idempotent (safe on the auto-migrate-on-boot
+-- re-run), matching the pattern used by 002/017/019.
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;
