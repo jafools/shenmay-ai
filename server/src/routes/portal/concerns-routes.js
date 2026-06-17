@@ -18,7 +18,7 @@ router.get('/', async (req, res, next) => {
       `SELECT c.id AS conversation_id, c.status, c.mode, c.unread, c.created_at,
               cu.id AS customer_id, cu.first_name, cu.last_name, cu.email,
               (SELECT content FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) AS last_message,
-              (SELECT created_at FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) AS last_message_at
+              c.last_message_at
        FROM conversations c
        JOIN customers cu ON c.customer_id = cu.id
        WHERE cu.tenant_id = $1 AND c.status = 'escalated'
