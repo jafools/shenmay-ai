@@ -115,6 +115,18 @@ async function test(name, fn) {
   }
 }
 
+// A whole server-mode block (or the DB probe) failing used to be swallowed with
+// a bare console.error, leaving `failed` at 0 so the suite exited 0 while
+// exercising nothing. Record such block-level errors as real failures so the
+// summary reports them and the process exits non-zero (CI goes red).
+function recordFailure(name, err) {
+  const message = (err && (err.message || String(err))) || 'unknown error';
+  console.log(`  ✗ ${name}`);
+  console.log(`    ${message}`);
+  failed++;
+  failures.push({ name, message });
+}
+
 class AssertionError extends Error {}
 
 function assert(condition, message) {
@@ -519,6 +531,15 @@ async function runTests() {
   if (!dbReady) {
     console.log('\n  Skipping integration tests — test DB not available.');
     console.log('  Unit tests above still ran. Fix the DB issue and re-run.\n');
+    // In CI (or when explicitly required) a missing test DB means the entire
+    // integration surface silently went untested — that must fail, not pass.
+    // Locally it stays a soft skip so `npm test` is usable without Postgres.
+    if (process.env.CI || process.env.TEST_REQUIRE_DB) {
+      recordFailure(
+        'Integration test DB unavailable (CI requires it)',
+        new Error('ensureTestDbExists() returned false — refusing to pass with all integration tests skipped'),
+      );
+    }
   } else {
 
   console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -606,7 +627,7 @@ async function runTests() {
     await stopServer(saasProc);
     saasProc = null;
   } catch (err) {
-    console.error('SaaS tests error:', err.message);
+    recordFailure('SaaS mode block did not complete (server boot / setup error)', err);
     if (saasProc) await stopServer(saasProc);
   }
 
@@ -690,7 +711,7 @@ async function runTests() {
     await stopServer(selfhostedProc);
     selfhostedProc = null;
   } catch (err) {
-    console.error('Self-hosted tests error:', err.message);
+    recordFailure('Self-hosted mode block did not complete (server boot / setup error)', err);
     if (selfhostedProc) await stopServer(selfhostedProc);
   }
 
@@ -964,8 +985,20 @@ async function runTests() {
     await stopServer(licenseProc);
     licenseProc = null;
   } catch (err) {
-    console.error('License master tests error:', err.message);
+    recordFailure('License-master mode block did not complete (server boot / setup error)', err);
     if (licenseProc) await stopServer(licenseProc);
+  }
+
+  // Coverage backstop: with the DB up we expect all three server-mode blocks to
+  // run (~67 tests total). If far fewer ran, a whole block was silently skipped
+  // — fail rather than report a green near-empty run. Bump this only if blocks
+  // are intentionally removed.
+  const MIN_INTEGRATION_TESTS = 50;
+  if (passed + failed < MIN_INTEGRATION_TESTS) {
+    recordFailure(
+      `Integration coverage floor not met (${passed + failed} ran, expected >= ${MIN_INTEGRATION_TESTS})`,
+      new Error('a server-mode block appears to have been skipped'),
+    );
   }
 
   } // end if (dbReady)
