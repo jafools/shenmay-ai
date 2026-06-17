@@ -17,3 +17,19 @@ updates:
       github-actions:
         patterns:
           - "*"
+
+  # Base-image updates for the two Dockerfiles. Flags a stale node:NN-alpine
+  # weekly so the EOL-runtime gap that left prod on Node 20 past its 2026-04-30
+  # end-of-life can't recur silently.
+  - package-ecosystem: docker
+    directory: /server
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore(ci)
+  - package-ecosystem: docker
+    directory: /client
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore(ci)
