@@ -646,8 +646,10 @@ async function runTests() {
         [tenantId]
       );
 
+      // Give each a real (non-anon) email so it counts toward the cap —
+      // isWithinCustomerLimit excludes @visitor.* AND NULL emails from the count.
       const create = (external_id, name) =>
-        post(saasUrl, '/api/v1/customers', { external_id, name }, apiKey);
+        post(saasUrl, '/api/v1/customers', { external_id, name, email: `${external_id}@captest.example` }, apiKey);
 
       // Two net-new customers fit under the cap of 2.
       assert((await create('cust-1', 'Alice')).status === 201, '1st create should be 201');
