@@ -67,23 +67,26 @@ const {
   validateTarget,
 } = require('../server/src/services/brandLearning/curate');
 
-// ── Test runner (matches existing tests/tokenizer.test.js style) ─────────────
+// ── Async-aware test runner (collect-then-run; matches tests/webhook-ssrf.test.js) ─
+//
+// `test()` and `section()` REGISTER into an ordered queue instead of running
+// inline; a single async loop at the bottom of the file drains the queue and
+// `await`s each test body. This is what lets async tests (e.g. the
+// mergeBucketPure embedding-dedup suite) actually run their post-`await`
+// assertions: a synchronous runner logs ✓ before the promise settles and
+// `process.exit` fires before the microtask queue drains, silently skipping them.
 
 let passed = 0;
 let failed = 0;
 const failures = [];
+const queue = [];
 
 function test(name, fn) {
-  try {
-    fn();
-    console.log(`  ✓ ${name}`);
-    passed++;
-  } catch (err) {
-    console.log(`  ✗ ${name}`);
-    console.log(`    ${err.message || err}`);
-    failed++;
-    failures.push({ name, message: err.message || String(err) });
-  }
+  queue.push({ type: 'test', name, fn });
+}
+
+function section(label) {
+  queue.push({ type: 'section', label });
 }
 
 function assert(condition, message) {
@@ -99,13 +102,13 @@ function assertContains(hay, needle, message) {
   if (!String(hay).includes(needle)) throw new Error(`${message || 'Does not contain'}: expected "${hay}" to include "${needle}"`);
 }
 
-console.log('\n== Brand Learning Unit Tests ==\n');
+section('\n== Brand Learning Unit Tests ==\n');
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. scrub.js — PII pre-distillation pass
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('Scrub');
+section('Scrub');
 
 test('email is replaced by [EMAIL_n] token', () => {
   const messages = [
@@ -186,7 +189,7 @@ test('quickScanForResidualPii catches an unscrubbed email', () => {
 // 2. promote.js — frequency-threshold promotion
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\nPromote');
+section('\nPromote');
 
 test('canonicalKey is whitespace and case insensitive', () => {
   assertEqual(canonicalKey('  Do You Ship?'), 'do you ship');
@@ -574,7 +577,7 @@ test('candidates above cap get truncated', () => {
 // 2.5. curate.js — owner curation helpers (delete/promote individual items)
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\nCurate');
+section('\nCurate');
 
 test('validateTarget rejects unknown source', () => {
   let threw = false;
@@ -725,7 +728,7 @@ test('promoted process retains description', () => {
 // 3. distill.js — normalizeObservations
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\nDistill normalize');
+section('\nDistill normalize');
 
 test('normalize drops malformed entries', () => {
   const raw = {
@@ -761,7 +764,7 @@ test('normalize trims oversized strings', () => {
 // 3b. distill.js — buildAnchorList + buildDistillSystem (v3.5.5)
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\nDistill anchoring');
+section('\nDistill anchoring');
 
 test('buildAnchorList returns empty for null/undefined/empty inputs', () => {
   assertEqual(buildAnchorList(null, null), '');
@@ -892,7 +895,7 @@ test('buildAnchorList ignores garbage entries (non-object, missing field, non-st
 // 3c. embeddings.js — Phase 3 semantic dedup (v3.5.6)
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\nEmbedding semantic dedup');
+section('\nEmbedding semantic dedup');
 
 // ---- pure math ----------------------------------------------------------
 
@@ -1263,7 +1266,7 @@ test('DEFAULT_DISTANCE_THRESHOLD tuned to 0.30 (v3.5.8 canary)', () => {
 // 4. render.js — prompt block rendering
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\nRender');
+section('\nRender');
 
 test('empty brand_soul renders empty string', () => {
   assertEqual(renderBrandSoulForPrompt(null), '');
@@ -1294,7 +1297,7 @@ test('block instructs the agent NEVER to reveal it', () => {
 // 5. PII fuzz — 100 synthetic anon conversations + diverse PII shapes
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\nPII fuzz');
+section('\nPII fuzz');
 
 test('100 synthetic conversations with diverse PII produce no PII residue', () => {
   // PII shapes the regex detectors are designed to catch. Generic order /
@@ -1360,12 +1363,31 @@ test('100 synthetic conversations with diverse PII produce no PII residue', () =
 
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log(`\n== Results: ${passed} passed, ${failed} failed ==\n`);
-if (failed > 0) {
-  console.log('Failures:');
-  for (const f of failures) {
-    console.log(`  - ${f.name}: ${f.message}`);
+(async () => {
+  for (const item of queue) {
+    if (item.type === 'section') {
+      console.log(item.label);
+      continue;
+    }
+    try {
+      await item.fn();
+      console.log(`  ✓ ${item.name}`);
+      passed++;
+    } catch (err) {
+      console.log(`  ✗ ${item.name}`);
+      console.log(`    ${err.message || err}`);
+      failed++;
+      failures.push({ name: item.name, message: err.message || String(err) });
+    }
   }
-  process.exit(1);
-}
-process.exit(0);
+
+  console.log(`\n== Results: ${passed} passed, ${failed} failed ==\n`);
+  if (failed > 0) {
+    console.log('Failures:');
+    for (const f of failures) {
+      console.log(`  - ${f.name}: ${f.message}`);
+    }
+    process.exit(1);
+  }
+  process.exit(0);
+})();
