@@ -5,6 +5,34 @@
 
 ---
 
+## Last updated: 2026-06-17 (PM) — **Audit sprint cont'd: Milestone 1 COMPLETE (6/6) + Milestone 2 4/5 — all merged to main (NOT released)**
+
+Continuation of the 2026-06-10 principal-audit fix-sprint (the entry below covers M0 + M1 5/6). This session finished M1 (T9) and banked the lower-risk M2 tasks. **5 PRs, all CI 5/5, squash-merged to `main` → `:edge`/staging only. Customers still on `v3.6.2` — no tags cut.** Tracker of record: `docs/AUDIT-2026-06-10.md` (statuses now updated).
+
+### Merged this session (→ staging only)
+- **[#225](https://github.com/jafools/shenmay-ai/pull/225)** (M1/T9): license instance-rebind (M4). `getInstanceId()` replaces the `sha256(KEY+APP_URL+pid)` const → env pin > persisted random id (**mig 045** `instance_identity`) > key-derived fallback. Platform-admin `PATCH /api/platform/licenses/:id/unbind` (clear or transfer). `docs/RUNBOOK-LICENSE-REBIND.md` + `SHENMAY_INSTANCE_ID` pin in compose/install.sh. First license unit suite (8). **→ M1 complete (6/6).**
+- **[#226](https://github.com/jafools/shenmay-ai/pull/226)** (M2/T10): observability (M11+M12). pino + AsyncLocalStorage request-id context, `X-Request-Id` header, response-finish `http_5xx_total` on `/api/health`, DSN-gated Sentry (silent by default). +7 unit tests.
+- **[#227](https://github.com/jafools/shenmay-ai/pull/227)** (M2/T12): migration runner `pg_advisory_lock` + per-migration transaction (M13).
+- **[#228](https://github.com/jafools/shenmay-ai/pull/228)** (M2/T13): denormalize `conversations.last_message_at` (M10) — **mig 046** (column + backfill + AFTER-INSERT trigger + DESC index); read paths sort on the column, dropping the correlated per-row subquery. (EXPLAIN-on-prod still owed.)
+- **[#229](https://github.com/jafools/shenmay-ai/pull/229)** (M2/T11a): extract shared widget session provisioning (M7) — `resolveTenantByWidgetKey` + `findOrCreateAuthenticatedCustomer`; unified lookup adds `deleted_at IS NULL` everywhere (safe vs the unique index — soft-delete paths rewrite the email).
+
+### New migrations (auto-apply on backend boot)
+**045** instance_identity (T9) · **046** conversations.last_message_at + trigger + index (T13). (044 was last session.)
+
+### Decisions locked this session
+- **T9** = platform-admin unbind (not self-serve). **Q4** (T10) = DSN-gated Sentry, silent by default. **Q5** (T14) = "memory file + last N turns" is acceptable → T14 will cap turns/tokens per call (no smarter retrieve needed).
+
+### Open / next (Milestone 2 remainder → M3)
+- **T11b** — extract `chatService.handleMessage()` from the 437-line `/chat` handler (M8; the **live-chat hot path**). **Checkpoint-gated**: bring a plan before touching it. Deps satisfied (T3 engine tests + T11a done).
+- **T14** — LLM history budget (M9; Q5 answered): cap turns/tokens, lean on memory summaries; canary on staging before any release.
+- **Milestone 3** — T15–T20 docs/polish.
+- **Release note (when a tag finally ships T9):** unbind all currently-bound licenses once (`docs/RUNBOOK-LICENSE-REBIND.md` has the SQL); migrations 045 + 046 auto-apply.
+
+### Gotcha logged
+Caught committing T11a directly onto local `main` (forgot to branch). Moved it to `fix/widget-session-dedup` + `git reset --hard origin/main` before any push reached `main`. Always `git checkout -b` BEFORE the first edit of a new task.
+
+---
+
 ## Last updated: 2026-06-17 — **Audit fix-sprint: Milestone 0 done + Milestone 1 5/6, all merged to main (NOT yet released)**
 
 Implementation pass on the **2026-06-10 principal audit** (47-agent ultracode audit; B+, 1 High + 14 Medium). Tracker of record: **`docs/AUDIT-2026-06-10.md`** (every finding → task → status). Worked it as milestone-ordered fix-PRs, each branch → PR → CI → squash-merge.
