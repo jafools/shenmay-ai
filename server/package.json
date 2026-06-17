@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Shenmay AI — customer-facing AI agent backend",
   "main": "src/index.js",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
