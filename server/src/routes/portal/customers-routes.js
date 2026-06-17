@@ -437,7 +437,7 @@ router.get('/:id', async (req, res, next) => {
                 'status',          conv.status,
                 'created_at',      conv.created_at,
                 'message_count',   (SELECT COUNT(*) FROM messages WHERE conversation_id = conv.id),
-                'last_message_at', (SELECT created_at FROM messages WHERE conversation_id = conv.id ORDER BY created_at DESC LIMIT 1),
+                'last_message_at', conv.last_message_at,
                 'last_message',    (SELECT content FROM messages WHERE conversation_id = conv.id ORDER BY created_at DESC LIMIT 1)
               ) ORDER BY conv.created_at DESC), '[]')
                FROM conversations conv

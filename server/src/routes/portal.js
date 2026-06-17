@@ -154,8 +154,7 @@ router.get('/search', async (req, res, next) => {
                 (SELECT content FROM messages WHERE conversation_id = c.id
                  AND content ILIKE $2
                  ORDER BY created_at DESC LIMIT 1) AS matching_message,
-                (SELECT created_at FROM messages WHERE conversation_id = c.id
-                 ORDER BY created_at DESC LIMIT 1) AS last_message_at
+                c.last_message_at
          FROM conversations c
          JOIN customers cu ON c.customer_id = cu.id
          WHERE cu.tenant_id = $1 AND cu.deleted_at IS NULL
@@ -163,7 +162,7 @@ router.get('/search', async (req, res, next) => {
              SELECT 1 FROM messages m
              WHERE m.conversation_id = c.id AND m.content ILIKE $2
            )
-         ORDER BY last_message_at DESC NULLS LAST
+         ORDER BY c.last_message_at DESC NULLS LAST
          LIMIT 10`,
         [tid, pattern]
       ),
@@ -220,15 +219,12 @@ router.get('/dashboard', async (req, res, next) => {
                   cu.email,
                   ${anonEmailLikeMatch('cu.email')} AS is_anonymous,
                   (SELECT content FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) AS last_message,
-                  (SELECT created_at FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) AS last_message_at,
+                  c.last_message_at,
                   (SELECT COUNT(*) FROM messages WHERE conversation_id = c.id) AS message_count
            FROM conversations c
            JOIN customers cu ON c.customer_id = cu.id
            WHERE cu.tenant_id = $1 AND cu.deleted_at IS NULL
-           ORDER BY COALESCE(
-             (SELECT created_at FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1),
-             c.created_at
-           ) DESC LIMIT 10`,
+           ORDER BY c.last_message_at DESC LIMIT 10`,
           [tid]
         ),
         db.query(

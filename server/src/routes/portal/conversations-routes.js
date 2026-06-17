@@ -79,7 +79,7 @@ router.get('/', async (req, res, next) => {
               ${anonEmailLikeMatch('cu.email')} AS is_anonymous,
               (SELECT COUNT(*) FROM messages WHERE conversation_id = c.id) AS message_count,
               (SELECT content FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) AS last_message,
-              (SELECT created_at FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) AS last_message_at,
+              c.last_message_at,
               COALESCE(
                 (SELECT json_agg(json_build_object('id', l.id, 'name', l.name, 'color', l.color) ORDER BY l.name)
                  FROM conversation_labels cl JOIN labels l ON cl.label_id = l.id
@@ -89,10 +89,7 @@ router.get('/', async (req, res, next) => {
        FROM conversations c
        JOIN customers cu ON c.customer_id = cu.id
        WHERE ${where}
-       ORDER BY COALESCE(
-         (SELECT created_at FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1),
-         c.created_at
-       ) DESC
+       ORDER BY c.last_message_at DESC
        LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
       params
     );
