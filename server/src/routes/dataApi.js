@@ -78,50 +78,59 @@ try { bcrypt = require('bcryptjs'); } catch {
 const DATA_API_KEY_PREFIX = 'shenmay_da_';
 
 async function requireDataApiKey(req, res, next) {
-  const auth = req.headers.authorization || '';
-  const key  = auth.startsWith('Bearer ') ? auth.slice(7).trim() : null;
+  try {
+    const auth = req.headers.authorization || '';
+    const key  = auth.startsWith('Bearer ') ? auth.slice(7).trim() : null;
 
-  if (!key || !key.startsWith(DATA_API_KEY_PREFIX)) {
-    return res.status(401).json({
-      error: 'Missing or invalid API key. Pass: Authorization: Bearer shenmay_da_<key>',
-    });
+    if (!key || !key.startsWith(DATA_API_KEY_PREFIX)) {
+      return res.status(401).json({
+        error: 'Missing or invalid API key. Pass: Authorization: Bearer shenmay_da_<key>',
+      });
+    }
+
+    if (!bcrypt) {
+      return res.status(500).json({ error: 'Server auth module not available.' });
+    }
+
+    // data_api_key_prefix stores the full prefix plus the first 8 chars of the
+    // random tail — 19 chars total (11-char `shenmay_da_` + 8).
+    const prefix = key.slice(0, DATA_API_KEY_PREFIX.length + 8);
+    const { rows } = await db.query(
+      `SELECT id AS tenant_id, data_api_key_hash
+       FROM tenants
+       WHERE data_api_key_prefix = $1 AND data_api_key_hash IS NOT NULL`,
+      [prefix]
+    );
+
+    if (rows.length === 0) {
+      return res.status(401).json({ error: 'Invalid API key.' });
+    }
+
+    const tenant = rows[0];
+    const valid  = await bcrypt.compare(key, tenant.data_api_key_hash);
+    if (!valid) {
+      return res.status(401).json({ error: 'Invalid API key.' });
+    }
+
+    // Per-key rate limit — enforced after auth so anonymous probes don't consume quota
+    if (!checkKeyRateLimit(prefix)) {
+      return res.status(429).json({
+        error: 'Rate limit exceeded.',
+        detail: `This API key is limited to ${KEY_RATE_LIMIT} requests per minute. Please slow down or contact support to increase your limit.`,
+      });
+    }
+
+    req.tenantId  = tenant.tenant_id;
+    req.keyPrefix = prefix; // available for logging if needed
+    next();
+  } catch (err) {
+    // A transient DB error or a bcrypt failure here used to become an unhandled
+    // promise rejection — Express 4 does not forward async-middleware rejections
+    // to the error handler — which terminated the single backend replica for
+    // ALL tenants (widget chats mid-request included). Forward to the central
+    // error handler so the request gets a clean 500 and the process survives.
+    next(err);
   }
-
-  if (!bcrypt) {
-    return res.status(500).json({ error: 'Server auth module not available.' });
-  }
-
-  // data_api_key_prefix stores the full prefix plus the first 8 chars of the
-  // random tail — 19 chars total (11-char `shenmay_da_` + 8).
-  const prefix = key.slice(0, DATA_API_KEY_PREFIX.length + 8);
-  const { rows } = await db.query(
-    `SELECT id AS tenant_id, data_api_key_hash
-     FROM tenants
-     WHERE data_api_key_prefix = $1 AND data_api_key_hash IS NOT NULL`,
-    [prefix]
-  );
-
-  if (rows.length === 0) {
-    return res.status(401).json({ error: 'Invalid API key.' });
-  }
-
-  const tenant = rows[0];
-  const valid  = await bcrypt.compare(key, tenant.data_api_key_hash);
-  if (!valid) {
-    return res.status(401).json({ error: 'Invalid API key.' });
-  }
-
-  // Per-key rate limit — enforced after auth so anonymous probes don't consume quota
-  if (!checkKeyRateLimit(prefix)) {
-    return res.status(429).json({
-      error: 'Rate limit exceeded.',
-      detail: `This API key is limited to ${KEY_RATE_LIMIT} requests per minute. Please slow down or contact support to increase your limit.`,
-    });
-  }
-
-  req.tenantId  = tenant.tenant_id;
-  req.keyPrefix = prefix; // available for logging if needed
-  next();
 }
 
 

@@ -10,6 +10,21 @@ const path    = require('path');
 const { securityHeaders, portalCors } = require('./middleware/security');
 const { isSelfHosted, DEPLOYMENT_MODES } = require('./config/plans');
 
+// ── Crash safety net ────────────────────────────────────────────────────────────
+// A rejected promise that escapes a handler (e.g. an unwrapped async route or
+// middleware hitting a transient DB error) would otherwise terminate the process
+// under Node's default unhandled-rejection policy with no diagnosable trace. Log
+// it with a stack, then exit non-zero so the container's restart policy brings up
+// a clean replica rather than continuing from an unknown state.
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] Unhandled promise rejection:', reason && reason.stack ? reason.stack : reason);
+  process.exit(1);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught exception:', err && err.stack ? err.stack : err);
+  process.exit(1);
+});
+
 // ── Startup secret validation ──────────────────────────────────────────────────
 // Refuse to start in production with known-default secrets.
 (function validateSecrets() {
