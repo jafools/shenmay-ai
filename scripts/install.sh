@@ -346,6 +346,10 @@ CLOUDFLARE_TUNNEL_TOKEN=${CF_TOKEN}
 # Leave blank for free trial (20 messages/mo, 1 customer).
 # Upgrade at: https://pontensolutions.com/shenmay/license
 SHENMAY_LICENSE_KEY=${SHENMAY_LICENSE_KEY}
+# Optional: pin a stable license-binding id. Leave blank — one is generated and
+# persisted on first boot, so restarts and domain changes don't rebind. Set it
+# only to carry one id across server moves (docs/RUNBOOK-LICENSE-REBIND.md).
+#SHENMAY_INSTANCE_ID=
 ENV
 
   ok "Configuration saved to .env"
