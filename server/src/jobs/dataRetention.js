@@ -204,8 +204,10 @@ async function purgeAnonymousSessions() {
 //   - is_active → false
 //   - anonymized_at → NOW()
 //
-// Conversation metadata (started_at, summary, topics) and audit logs are kept
-// for legal + analytics purposes — they no longer contain PII after anonymisation.
+// Conversation metadata (started_at) and audit logs are kept for legal +
+// analytics purposes. summary + topics_covered ARE scrubbed (step 4b) because
+// they are LLM-generated recaps that embed the customer's name and discussion
+// specifics in plaintext — they would otherwise survive an Article-17 erasure.
 
 async function processErasureQueue() {
   const { rows: pendingDeletions } = await db.query(
@@ -289,6 +291,19 @@ async function anonymizeCustomer(customerId, tenantId, requestedBy) {
      FROM conversations co
      WHERE m.conversation_id = co.id
        AND co.customer_id = $1`,
+    [customerId]
+  );
+
+  // 4b. Scrub conversation summaries + topics. These are LLM-generated recaps
+  // (e.g. "Conversation with Jane about her retirement timeline…") written as
+  // plaintext — unlike memory_file/soul_file, which are encrypted then wiped in
+  // step 1. Without this they survive erasure and surface in the portal's
+  // conversation history. Closes the remaining Art.17 gap (sister to step 3b).
+  await db.query(
+    `UPDATE conversations
+       SET summary        = NULL,
+           topics_covered = '[]'::jsonb
+     WHERE customer_id = $1`,
     [customerId]
   );
 
