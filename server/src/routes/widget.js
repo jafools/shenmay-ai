@@ -99,6 +99,114 @@ function requireWidgetAuth(req, res, next) {
 }
 
 
+// ── Shared session provisioning (T11a / audit M7) ──────────────────────────────
+// POST /session and POST /session/claim both resolve the tenant from the widget
+// key and find-or-create the authenticated customer. These were ~110 lines of
+// near-verbatim copy-paste that had already diverged (only /claim filtered
+// deleted_at). Extracted here so the two paths can't drift again.
+
+/**
+ * Resolve the active tenant for a widget key.
+ * @returns {Promise<Object|null>} the tenant row, or null if none is active.
+ */
+async function resolveTenantByWidgetKey(widgetKey) {
+  const { rows } = await db.query(
+    `SELECT id, name, agent_name, slug, primary_color, secondary_color,
+            vertical, vertical_config, compliance_config,
+            base_soul_template, llm_provider, llm_model,
+            chat_bubble_name, website_url,
+            anonymous_only_mode
+     FROM tenants
+     WHERE widget_api_key = $1 AND is_active = true`,
+    [widgetKey]
+  );
+  return rows[0] || null;
+}
+
+/**
+ * Find an existing authenticated customer by email, or create one (enforcing the
+ * plan seat-limit). Decrypts soul/memory on an existing row.
+ *
+ * The lookup filters `deleted_at IS NULL` so a soft-deleted (anon or GDPR-erased)
+ * row is never resurrected. This is safe against the customers(tenant_id, email)
+ * unique index because every soft-delete path rewrites the email away from the
+ * real one (anon_* on claim, deleted_*@anonymized.shenmay on erasure), so the
+ * subsequent INSERT can't collide.
+ *
+ * @param {Object} args
+ * @param {Object} args.tenant        resolved tenant row
+ * @param {string} args.email         visitor-supplied email
+ * @param {string} [args.display_name]
+ * @param {Object} args.req           Express request (for consent IP)
+ * @returns {Promise<{customer: Object, isNew: boolean} | {limitReached: true}>}
+ */
+async function findOrCreateAuthenticatedCustomer({ tenant, email, display_name, req }) {
+  const normalizedEmail = email.toLowerCase().trim();
+
+  const { rows: customerRows } = await db.query(
+    `SELECT id, first_name, last_name, email, soul_file, memory_file,
+            onboarding_status, onboarding_categories_completed
+     FROM customers
+     WHERE email = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+    [normalizedEmail, tenant.id]
+  );
+
+  if (customerRows.length > 0) {
+    const customer = customerRows[0];
+    // Decrypt encrypted columns after read.
+    customer.soul_file   = safeDecryptJson(customer.soul_file);
+    customer.memory_file = safeDecryptJson(customer.memory_file);
+    return { customer, isNew: false };
+  }
+
+  // Auto-create — enforce the plan customer cap first.
+  const sub = await getSubscription(tenant.id);
+  const isUnrestricted = sub && UNRESTRICTED_PLANS.includes(sub.plan);
+  if (!isUnrestricted && sub && sub.max_customers !== null) {
+    const { rows: countRows } = await db.query(
+      `SELECT COUNT(*) FROM customers
+       WHERE tenant_id = $1 AND deleted_at IS NULL
+         AND ${anonEmailNotLikeGuard()}`,
+      [tenant.id]
+    );
+    const currentCount = parseInt(countRows[0].count);
+    if (currentCount >= sub.max_customers) {
+      console.log(`[Widget] Customer limit reached for tenant ${tenant.slug} (${currentCount}/${sub.max_customers}) — rejecting new session`);
+      sendLimitNotificationIfNeeded(tenant.id);
+      return { limitReached: true };
+    }
+  }
+
+  // Derive name from display_name or email prefix.
+  let firstName = 'Guest';
+  let lastName  = '';
+  if (display_name && display_name.trim()) {
+    const parts = display_name.trim().split(/\s+/);
+    firstName = parts[0];
+    lastName  = parts.slice(1).join(' ');
+  } else {
+    const prefix = normalizedEmail.split('@')[0];
+    firstName = prefix.charAt(0).toUpperCase() + prefix.slice(1).replace(/[._-]/g, ' ');
+  }
+
+  // GDPR Article 7: providing an email + initiating the session is the consent
+  // event; capture IP + policy version as proof.
+  const consentIp      = req.ip || req.headers['x-forwarded-for'] || null;
+  const consentVersion = process.env.PRIVACY_POLICY_VERSION || '2024-01';
+
+  const { rows: newRows } = await db.query(
+    `INSERT INTO customers
+       (tenant_id, email, first_name, last_name, onboarding_status,
+        consent_given_at, consent_ip, consent_version)
+     VALUES ($1, $2, $3, $4, 'pending', NOW(), $5::inet, $6)
+     RETURNING id, first_name, last_name, email, soul_file, memory_file,
+               onboarding_status, onboarding_categories_completed`,
+    [tenant.id, normalizedEmail, firstName, lastName, consentIp, consentVersion]
+  );
+  console.log(`[Widget] Auto-created customer: ${firstName} ${lastName} <${normalizedEmail}> for tenant ${tenant.slug}`);
+  return { customer: newRows[0], isNew: true };
+}
+
 // ── POST /api/widget/session ───────────────────────────────────────────────────
 //
 // Body: { widget_key, email?, display_name? }
@@ -115,22 +223,10 @@ router.post('/session', async (req, res, next) => {
     }
 
     // 1. Resolve tenant
-    const { rows: tenantRows } = await db.query(
-      `SELECT id, name, agent_name, slug, primary_color, secondary_color,
-              vertical, vertical_config, compliance_config,
-              base_soul_template, llm_provider, llm_model,
-              chat_bubble_name, website_url,
-              anonymous_only_mode
-       FROM tenants
-       WHERE widget_api_key = $1 AND is_active = true`,
-      [widget_key]
-    );
-
-    if (tenantRows.length === 0) {
+    const tenant = await resolveTenantByWidgetKey(widget_key);
+    if (!tenant) {
       return res.status(403).json({ error: 'Invalid or inactive widget key' });
     }
-
-    const tenant = tenantRows[0];
 
     // If the tenant has anonymous-only mode on, ignore any email/display_name
     // the host page passed in and route into the anonymous branch. This is the
@@ -159,76 +255,15 @@ router.post('/session', async (req, res, next) => {
 
     } else {
       // ── Authenticated visitor ─────────────────────────────────────────────────
-      const normalizedEmail = email.toLowerCase().trim();
-
-      const { rows: customerRows } = await db.query(
-        `SELECT id, first_name, last_name, email, soul_file, memory_file,
-                onboarding_status, onboarding_categories_completed
-         FROM customers
-         WHERE email = $1 AND tenant_id = $2`,
-        [normalizedEmail, tenant.id]
-      );
-
-      if (customerRows.length === 0) {
-        // Auto-create — but check customer limit first
-        const sub = await getSubscription(tenant.id);
-        const isUnrestricted = sub && UNRESTRICTED_PLANS.includes(sub.plan);
-
-        if (!isUnrestricted && sub && sub.max_customers !== null) {
-          const { rows: countRows } = await db.query(
-            `SELECT COUNT(*) FROM customers
-             WHERE tenant_id = $1 AND deleted_at IS NULL
-               AND ${anonEmailNotLikeGuard()}`,
-            [tenant.id]
-          );
-          const currentCount = parseInt(countRows[0].count);
-          if (currentCount >= sub.max_customers) {
-            console.log(`[Widget] Customer limit reached for tenant ${tenant.slug} (${currentCount}/${sub.max_customers}) — rejecting new session`);
-            // Fire one-time notification email for trial tenants
-            sendLimitNotificationIfNeeded(tenant.id);
-            return res.status(403).json({
-              error: 'customer_limit_reached',
-              message: 'This service is temporarily at capacity. Please try again later.',
-            });
-          }
-        }
-
-        // Derive name from display_name or email prefix
-        let firstName = 'Guest';
-        let lastName  = '';
-        if (display_name && display_name.trim()) {
-          const parts = display_name.trim().split(/\s+/);
-          firstName = parts[0];
-          lastName  = parts.slice(1).join(' ');
-        } else {
-          const prefix = normalizedEmail.split('@')[0];
-          firstName = prefix.charAt(0).toUpperCase() + prefix.slice(1).replace(/[._-]/g, ' ');
-        }
-
-        // Capture consent IP and timestamp — GDPR Article 7 requires proof of consent.
-        // The act of providing an email address and initiating the widget session is
-        // the consent event. Tenant's privacy policy must be visible in the widget.
-        const consentIp      = req.ip || req.headers['x-forwarded-for'] || null;
-        const consentVersion = process.env.PRIVACY_POLICY_VERSION || '2024-01';
-
-        const { rows: newRows } = await db.query(
-          `INSERT INTO customers
-             (tenant_id, email, first_name, last_name, onboarding_status,
-              consent_given_at, consent_ip, consent_version)
-           VALUES ($1, $2, $3, $4, 'pending', NOW(), $5::inet, $6)
-           RETURNING id, first_name, last_name, email, soul_file, memory_file,
-                     onboarding_status, onboarding_categories_completed`,
-          [tenant.id, normalizedEmail, firstName, lastName, consentIp, consentVersion]
-        );
-        customer = newRows[0];
-        isNew    = true;
-        console.log(`[Widget] Auto-created customer: ${firstName} ${lastName} <${normalizedEmail}> for tenant ${tenant.slug}`);
-      } else {
-        customer = customerRows[0];
-        // Decrypt encrypted columns after read
-        customer.soul_file   = safeDecryptJson(customer.soul_file);
-        customer.memory_file = safeDecryptJson(customer.memory_file);
+      const result = await findOrCreateAuthenticatedCustomer({ tenant, email, display_name, req });
+      if (result.limitReached) {
+        return res.status(403).json({
+          error: 'customer_limit_reached',
+          message: 'This service is temporarily at capacity. Please try again later.',
+        });
       }
+      customer = result.customer;
+      isNew    = result.isNew;
 
       // If display_name was passed and soul_file has no customer_name yet, auto-save it.
       // This means logged-in users never need to see the "enter your name" screen.
@@ -493,22 +528,10 @@ router.post('/session/claim', async (req, res, next) => {
     }
 
     // 2. Resolve tenant and verify it matches the anon session
-    const { rows: tenantRows } = await db.query(
-      `SELECT id, name, agent_name, slug, primary_color, secondary_color,
-              vertical, vertical_config, compliance_config,
-              base_soul_template, llm_provider, llm_model,
-              chat_bubble_name, website_url,
-              anonymous_only_mode
-       FROM tenants
-       WHERE widget_api_key = $1 AND is_active = true`,
-      [widget_key]
-    );
-
-    if (tenantRows.length === 0) {
+    const tenant = await resolveTenantByWidgetKey(widget_key);
+    if (!tenant) {
       return res.status(403).json({ error: 'Invalid or inactive widget key' });
     }
-
-    const tenant = tenantRows[0];
 
     if (anonSession.tenant_id !== tenant.id) {
       return res.status(403).json({ error: 'Session/tenant mismatch' });
@@ -526,72 +549,15 @@ router.post('/session/claim', async (req, res, next) => {
 
     // 3. Find or create the authenticated customer
     const normalizedEmail = email.toLowerCase().trim();
-
-    const { rows: customerRows } = await db.query(
-      `SELECT id, first_name, last_name, email, soul_file, memory_file,
-              onboarding_status, onboarding_categories_completed
-       FROM customers
-       WHERE email = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
-      [normalizedEmail, tenant.id]
-    );
-
-    let realCustomer;
-    let isNew = false;
-
-    if (customerRows.length === 0) {
-      // Check customer seat limit before auto-creating
-      const sub = await getSubscription(tenant.id);
-      const isUnrestricted = sub && UNRESTRICTED_PLANS.includes(sub.plan);
-
-      if (!isUnrestricted && sub && sub.max_customers !== null) {
-        const { rows: countRows } = await db.query(
-          `SELECT COUNT(*) FROM customers
-           WHERE tenant_id = $1 AND deleted_at IS NULL
-             AND ${anonEmailNotLikeGuard()}`,
-          [tenant.id]
-        );
-        const currentCount = parseInt(countRows[0].count);
-        if (currentCount >= sub.max_customers) {
-          sendLimitNotificationIfNeeded(tenant.id);
-          return res.status(403).json({
-            error: 'customer_limit_reached',
-            message: 'This service is temporarily at capacity. Please try again later.',
-          });
-        }
-      }
-
-      // Derive name from display_name or email prefix
-      let firstName = 'Guest';
-      let lastName  = '';
-      if (display_name && display_name.trim()) {
-        const parts = display_name.trim().split(/\s+/);
-        firstName = parts[0];
-        lastName  = parts.slice(1).join(' ');
-      } else {
-        const prefix = normalizedEmail.split('@')[0];
-        firstName = prefix.charAt(0).toUpperCase() + prefix.slice(1).replace(/[._-]/g, ' ');
-      }
-
-      const consentIp      = req.ip || req.headers['x-forwarded-for'] || null;
-      const consentVersion = process.env.PRIVACY_POLICY_VERSION || '2024-01';
-
-      const { rows: newRows } = await db.query(
-        `INSERT INTO customers
-           (tenant_id, email, first_name, last_name, onboarding_status,
-            consent_given_at, consent_ip, consent_version)
-         VALUES ($1, $2, $3, $4, 'pending', NOW(), $5::inet, $6)
-         RETURNING id, first_name, last_name, email, soul_file, memory_file,
-                   onboarding_status, onboarding_categories_completed`,
-        [tenant.id, normalizedEmail, firstName, lastName, consentIp, consentVersion]
-      );
-      realCustomer = newRows[0];
-      isNew = true;
-      console.log(`[Widget/Claim] Auto-created customer: ${firstName} ${lastName} <${normalizedEmail}> for tenant ${tenant.slug}`);
-    } else {
-      realCustomer = customerRows[0];
-      realCustomer.soul_file   = safeDecryptJson(realCustomer.soul_file);
-      realCustomer.memory_file = safeDecryptJson(realCustomer.memory_file);
+    const result = await findOrCreateAuthenticatedCustomer({ tenant, email, display_name, req });
+    if (result.limitReached) {
+      return res.status(403).json({
+        error: 'customer_limit_reached',
+        message: 'This service is temporarily at capacity. Please try again later.',
+      });
     }
+    const realCustomer = result.customer;
+    const isNew = result.isNew;
 
     // 4. Reassign the anon conversation to the real customer
     //    This preserves all messages — the conversation row just gets a new owner.
