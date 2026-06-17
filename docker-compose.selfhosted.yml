@@ -127,6 +127,13 @@ services:
       # one id to follow the install across server moves (see
       # docs/RUNBOOK-LICENSE-REBIND.md).
       SHENMAY_INSTANCE_ID: ${SHENMAY_INSTANCE_ID:-}
+      # ── Observability (task T10) ──────────────────────────
+      # Error tracking is OFF by default on self-hosted — nothing leaves your
+      # server unless YOU set your own Sentry DSN here.
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      # pino log level; blank falls through to the code default
+      # (info in production, debug otherwise).
+      LOG_LEVEL: ${LOG_LEVEL:-}
     ports:
       - "127.0.0.1:3001:3001"
     depends_on:
