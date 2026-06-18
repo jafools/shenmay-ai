@@ -71,6 +71,10 @@ services:
       # Max recent conversation turns replayed to the LLM per chat call (T14);
       # older context is carried by the summarised session history. Default 20.
       WIDGET_LLM_HISTORY_TURNS: ${WIDGET_LLM_HISTORY_TURNS:-20}
+      # Max days after expiry a widget JWT can still be refreshed (T17). Default 7.
+      WIDGET_REFRESH_GRACE_DAYS: ${WIDGET_REFRESH_GRACE_DAYS:-7}
+      # Per-IP cap on onboard email-send endpoints per 15 min (T17). Default 5.
+      ONBOARD_EMAIL_RATE_LIMIT_MAX: ${ONBOARD_EMAIL_RATE_LIMIT_MAX:-5}
       # Brand-learning worker cadence (ms). Default = 24h = 86400000.
       # Empty value falls through to the code default — see
       # server/src/services/brandLearning/worker.js. Do not set a hardcoded

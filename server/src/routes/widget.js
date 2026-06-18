@@ -66,6 +66,13 @@ const WIDGET_JWT_SECRET  = process.env.WIDGET_JWT_SECRET || process.env.JWT_SECR
 // for any tab that sends at least one request per 24h.
 const WIDGET_JWT_EXPIRY  = '24h';
 
+// Cap how long after expiry a widget JWT can still be refreshed. /session/refresh
+// verifies with ignoreExpiration so a tab idle past the 24h TTL can recover — but
+// without a bound a stolen (or long-abandoned) token could be refreshed forever
+// (the widget_key gates nothing here: it is public, embedded in the host page).
+// Reject refresh once the token expired more than this many days ago.
+const WIDGET_REFRESH_GRACE_DAYS = parseInt(process.env.WIDGET_REFRESH_GRACE_DAYS || '7', 10);
+
 
 // ── CORS for widget (cross-origin iframe) ──────────────────────────────────────
 function widgetCors(req, res, next) {
@@ -452,6 +459,14 @@ router.post('/session/refresh', async (req, res, next) => {
 
     if (!payload || payload.widget_session !== true || !payload.tenant_id) {
       return res.status(401).json({ error: 'Invalid widget session token' });
+    }
+
+    // Age cap: a token expired longer ago than the grace window can't be
+    // refreshed — forces a fresh /session, bounding how long a leaked or
+    // abandoned token stays usable.
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (payload.exp && (nowSec - payload.exp) > WIDGET_REFRESH_GRACE_DAYS * 86400) {
+      return res.status(401).json({ error: 'Session expired too long ago to refresh. Please reload the page.' });
     }
 
     // Confirm the widget_key still belongs to the tenant the token claims,
