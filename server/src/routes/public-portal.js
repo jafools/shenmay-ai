@@ -53,10 +53,10 @@ function newToken() {
 }
 
 function clientIp(req) {
-  const xf = req.headers['x-forwarded-for'];
-  if (typeof xf === 'string' && xf.length > 0) {
-    return xf.split(',')[0].trim();
-  }
+  // Use req.ip, which Express derives correctly under the app's `trust proxy`
+  // setting (index.js) — it strips the proxy-appended hops and yields the
+  // Cloudflare-reported client. The raw X-Forwarded-For[0] is the LEFTMOST
+  // entry, which a client can spoof, so it must not key a rate limiter.
   return req.ip || req.socket?.remoteAddress || 'unknown';
 }
 

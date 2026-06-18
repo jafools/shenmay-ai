@@ -130,6 +130,19 @@ const registerLimiter = makeRateLimiter({
   message: { error: 'Too many registration attempts. Try again later.' },
 });
 
+// Verification-resend + password-reset email senders: cap how often these
+// public, unauthenticated endpoints can be triggered per IP (inbox spam /
+// account enumeration). register + login have their own limiters above; these
+// two were unguarded. Env-overridable — CI sets it high (the e2e suite shares
+// one IP); the 5×5 gate would otherwise trip it.
+const emailSendLimiter = makeRateLimiter({
+  windowMs: 60 * 60 * 1000,
+  max:      parseInt(process.env.ONBOARD_EMAIL_RATE_LIMIT_MAX || '5', 10),
+  standardHeaders: true,
+  legacyHeaders:   false,
+  message: { error: 'Too many requests. Please wait a while before requesting another email.' },
+});
+
 // Tenant + portal login: 3 per 15 min per IP (brute-force protection).
 // Override via LOGIN_RATE_LIMIT_MAX env var — useful for test environments
 // where many auth calls happen in quick succession (e.g. set to 200 in .env).
@@ -219,6 +232,8 @@ app.use('/api/widget', require('./routes/widget'));
 // Routes — Tenant Onboarding (public — registration + login)
 app.use('/api/onboard/register', registerLimiter);
 app.use('/api/onboard/login',    loginLimiter);
+app.use('/api/onboard/resend-verification', emailSendLimiter);
+app.use('/api/onboard/forgot-password',     emailSendLimiter);
 app.use('/api/onboard', require('./routes/onboard'));
 
 // Routes — Tenant Portal (requires portal JWT)
