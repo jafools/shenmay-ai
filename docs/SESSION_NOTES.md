@@ -5,6 +5,18 @@
 
 ---
 
+## Last updated: 2026-06-18 (PM/2) — **Closed the deferred T17 token hashing ([#241](https://github.com/jafools/shenmay-ai/pull/241)) — only 1 low-value Low now deferred**
+
+Picked up the one deferred *security* follow-up from the sprint: email-verification + password-reset tokens were stored plaintext. **[#241](https://github.com/jafools/shenmay-ai/pull/241)** (CI 5/5, merged → staging only) hashes them.
+
+- **`onboard.js`**: `hashToken()` = SHA-256 (correct for already-256-bit-random tokens — fast, indexable; not bcrypt). Store the digest at the 3 write sites (register / resend-verification / forgot-password); look up by hashing the incoming token at the 2 read sites (`/verify/:token`, `/reset-password`). Raw token still emailed. In-flight tokens fail-safe-invalidate on deploy; no migration.
+- **E2E blocker solved without a server affordance:** the e2e backend runs `NODE_ENV=production` (same as prod), so a non-prod response-exposure couldn't be gated safely. Instead the e2e **plants** a known token (`tests/e2e/helpers/db.js` `planEmailVerificationToken` writes a hash, returns the preimage) → still exercises `/verify`'s hash-lookup + JWT end-to-end. `e2e-saas` confirmed green.
+- **Write-side wiring** is pinned by a new unit test (`tests/onboard-token-hashing.test.js`): a route harness drives `/register` + `/verify` against fakes and asserts stored == `sha256(emailed)` and that `/verify` looks up by that same hash (so a write/read mismatch can't ship green). Unit chain now 323.
+
+**Remaining deferred (1, low value, not a regression):** conversations-routes ownership-guard dedup. Everything else from the 2026-06-10 audit is resolved on `main` (still `:edge`/staging — no tag).
+
+---
+
 ## Last updated: 2026-06-18 (PM) — **Audit sprint COMPLETE: Milestone 3 merged (T15–T20) — the entire 2026-06-10 audit is now resolved on main (NOT released)**
 
 Finished the audit fix-sprint. Milestone 3 (T15–T20) shipped this session via a parallel fan-out of the independent tasks + a deliberate split of T17. **6 PRs, all CI 5/5, squash-merged to `main` → `:edge`/staging only. Customers still on `v3.6.2` — no tags cut.** Tracker `docs/AUDIT-2026-06-10.md` fully updated.
