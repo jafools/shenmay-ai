@@ -6,7 +6,7 @@
 # (enforced via GitHub branch protection).
 #
 # Parallel jobs:
-#   - client-build     — vite build + vitest + eslint (no DB needed)
+#   - client-build     — eslint + vitest unit tests + vite build (no DB needed)
 #   - server-test      — spins up Postgres, runs migrations, runs
 #                        the integration test suite
 #   - e2e-saas         — spins up Postgres + full stack + runs
@@ -62,12 +62,17 @@ jobs:
 
       # Flat ESLint config lives at client/eslint.config.js and is tuned
       # for the current loose TS setup (see tsconfig.json). Warnings are
-      # allowed; errors fail the build. vitest is still skipped — no
-      # *.test.* files yet; add the step when the first frontend test
-      # is worth writing.
+      # allowed; errors fail the build.
       - name: Lint client
         working-directory: client
         run: npm run lint
+
+      # Vitest unit tests cover the failure surfaces the Playwright e2e suite
+      # is blind to — shenmayApi error paths and SubscriptionGate gating logic.
+      # Pure logic + jsdom, no DB or browser needed (config: client/vitest.config.ts).
+      - name: Unit test client
+        working-directory: client
+        run: npm run test:unit
 
       - name: Build client
         working-directory: client
