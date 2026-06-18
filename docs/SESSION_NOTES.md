@@ -5,6 +5,27 @@
 
 ---
 
+## Last updated: 2026-06-18 (PM/3) — **v3.7.0 LIVE — the entire 2026-06-10 audit fix-sprint shipped to customers**
+
+Tagged + deployed the whole audit sprint (PRs #217–#242) to production as **v3.7.0**. Customers are now on v3.7.0 (was v3.6.2).
+
+### Release gate + canary (both green before tagging)
+- **5×5 e2e-repeatability gate** on `main` → **10/10 cells + verdict success** ([run 27758189563](https://github.com/jafools/shenmay-ai/actions/runs/27758189563)).
+- **Staging canary** (token-hashing real round-trip — the one path the e2e only faked via a plant): register → `/verify` with the raw planted token → login, all green on the real deployed `:edge`; stored token confirmed a 64-hex hash; bogus token → 400; throwaway tenant cleaned up.
+
+### Ship
+- **Tag `v3.7.0`** (annotated; pushed `69b37df`) → `docker-publish` clean → `:3.7.0`/`:3.7`/`:stable`/`:latest` on GHCR.
+- **Hetzner**: `git checkout v3.7.0 && IMAGE_TAG=3.7.0 docker compose pull/up backend frontend`. Both containers `:3.7.0`. **Migrations 044 + 045 + 046 applied successfully on boot.** Internal `127.0.0.1:3001/api/health` **200** + external `https://shenmay.ai/api/health` **200** (`audit_write_failures:0`, `http_5xx_total:0`).
+- **T9 one-time license unbind**: `UPDATE licenses SET instance_id=NULL, last_ping_at=NULL WHERE instance_id IS NOT NULL` → cleared **2** bound keys (both Austin test/demo: `austin.ponten@gmail.com`, `ajaces@gmail.com`/portal-smoke); 0 bound remain. Each re-binds with the new stable T9 id on its next validate.
+
+### What customers get
+SaaS https://shenmay.ai on `:3.7.0`. On-prem customers get it via the rebuilt `:stable` on their own pull schedule — their instances re-bind cleanly post-upgrade (T9). New env vars are all defaulted (`WIDGET_LLM_HISTORY_TURNS`=20, `WIDGET_REFRESH_GRACE_DAYS`=7, `ONBOARD_EMAIL_RATE_LIMIT_MAX`=5), so no operator action needed.
+
+### Still open (1 deferred Low, not a regression)
+conversations-routes ownership-guard dedup — heterogeneous sites, lowest value. Plus pre-existing non-audit noise: stale docs PRs (#93/#169/#179) + 2 Dependabot PRs (#215 actions group; #222 node 22→26-alpine — **don't take 26**, 22 is current LTS).
+
+---
+
 ## Last updated: 2026-06-18 (PM/2) — **Closed the deferred T17 token hashing ([#241](https://github.com/jafools/shenmay-ai/pull/241)) — only 1 low-value Low now deferred**
 
 Picked up the one deferred *security* follow-up from the sprint: email-verification + password-reset tokens were stored plaintext. **[#241](https://github.com/jafools/shenmay-ai/pull/241)** (CI 5/5, merged → staging only) hashes them.
