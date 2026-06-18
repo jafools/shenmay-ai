@@ -1,3 +1,8 @@
+> **HISTORICAL — frozen, no longer maintained.** Point-in-time artifact kept for reference only.
+> For current state see [`docs/SESSION_NOTES.md`](../SESSION_NOTES.md). Archived 2026-06-18 (audit M3/T15).
+
+---
+
 # Shenmay AI — Test Report
 **Date:** 2026-03-12
 **Tester:** Claude (automated, while user was in meeting)

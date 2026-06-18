@@ -1,8 +1,12 @@
+> **HISTORICAL — frozen, no longer maintained.** This inventory stops at Session 20 (pre-v3.4) and is kept for reference only.
+> For current state see [`docs/SESSION_NOTES.md`](../SESSION_NOTES.md). Archived 2026-06-18 (audit M3/T16).
+
+---
+
 # Shenmay AI — Feature Inventory
 *Last updated: 2026-03-27 (Session 20)*
 
-> Living document. Update this whenever a feature ships or changes.
-> Organized by product area, not by session. For session-by-session history see [`docs/SESSION_NOTES.md`](docs/SESSION_NOTES.md).
+> Frozen snapshot, organized by product area. For session-by-session history see [`docs/SESSION_NOTES.md`](../SESSION_NOTES.md).
 
 ---
 

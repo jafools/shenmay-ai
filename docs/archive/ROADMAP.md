@@ -1,7 +1,12 @@
+> **HISTORICAL — frozen, no longer maintained.** This roadmap predates v3.4 and is kept for reference only.
+> For current state, open queue, and prod tag see [`docs/SESSION_NOTES.md`](../SESSION_NOTES.md). Archived 2026-06-18 (audit M3/T16).
+
+---
+
 # Shenmay AI — Product Roadmap
 *Last updated: 2026-04-11*
 
-> Organised by time horizon and priority, not by session. For session-by-session build history see `SESSION_HANDOFF.md`. For current feature inventory see `FEATURES.md`.
+> Organised by time horizon and priority, not by session. For the live session-by-session handoff see [`docs/SESSION_NOTES.md`](../SESSION_NOTES.md). For the (also-archived) feature inventory see [`FEATURES.md`](FEATURES.md).
 
 ---
 

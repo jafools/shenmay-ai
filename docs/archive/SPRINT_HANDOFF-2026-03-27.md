@@ -1,3 +1,9 @@
+> **HISTORICAL — frozen, no longer maintained.** Point-in-time artifact kept for reference only.
+> For current state see [`docs/SESSION_NOTES.md`](../SESSION_NOTES.md). Archived 2026-06-18 (audit M3/T15).
+> (Previously tracked at repo root as `SPRINT_HANDOFF.md`, which is also `.gitignore`d; renamed on archive to keep it tracked.)
+
+---
+
 # Shenmay AI — Sprint Handoff Notes
 **Last updated:** 2026-03-27
 **Status:** Sprints 1–3 complete, ready to push/pull/rebuild

@@ -1,3 +1,8 @@
+> **HISTORICAL — frozen, no longer maintained.** Point-in-time artifact kept for reference only.
+> For current state see [`docs/SESSION_NOTES.md`](../SESSION_NOTES.md). Archived 2026-06-18 (audit M3/T15).
+
+---
+
 # Shenmay AI — Cloudflare Tunnel Setup
 
 Expose `api.nomii.pontensolutions.com` → your local backend at `10.0.0.2:3001`, permanently and for free, using Cloudflare Tunnel. No port forwarding, no VPS required.

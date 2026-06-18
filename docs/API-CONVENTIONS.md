@@ -60,7 +60,7 @@ out.
 |---|---|---|---|
 | `POST /api/auth/login` | **Widget end-users** | `customers`, `advisors` | The people Austin's *customer's customers* are — the end-users who chat with a widget deployed on a customer site. Also the advisor dashboard (human takeover). |
 | `POST /api/onboard/login` | **Tenant admins** | `tenant_admins` | Austin's direct SaaS customers. The person who signed up at pontensolutions.com to run a chatbot on their site. Logs into the Shenmay dashboard at `/nomii/portal`. |
-| `POST /api/platform/auth/login` | **Platform admins** | `platform_admins` | Austin + future Shenmay operators. Logs into the super-admin panel that manages tenants, licenses, billing across the SaaS. Only mounted when `NOMII_LICENSE_MASTER=true`. |
+| `POST /api/platform/auth/login` | **Platform admins** | `platform_admins` | Austin + future Shenmay operators. Logs into the super-admin panel that manages tenants, licenses, billing across the SaaS. Only mounted when `SHENMAY_LICENSE_MASTER=true`. |
 
 ### JWT payloads differ per endpoint
 
