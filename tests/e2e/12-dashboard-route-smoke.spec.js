@@ -97,8 +97,11 @@ test.describe('Dashboard Route Smoke', () => {
         `${url} document responded with HTTP ${status}`,
       ).toBeLessThan(400);
 
-      // Give React a beat to mount the page tree and run any lazy effects
-      // that might throw. networkidle covers most of it; this is the buffer.
+      // INTENTIONAL settle window — NOT replaceable with a deterministic wait.
+      // This spec asserts the *absence* of console/page errors fired by lazy
+      // effects after networkidle. There is no positive DOM/response signal to
+      // await for "no error will fire" — we have to give React a fixed beat to
+      // mount the tree and run late effects, then check nothing threw.
       // Settings is the heaviest page (11 child sections, each with its own
       // API call) so it benefits from a longer settle window.
       await page.waitForTimeout(1500);

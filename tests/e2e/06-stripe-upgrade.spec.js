@@ -114,17 +114,23 @@ test.describe('Stripe upgrade — webhook-driven, no real card', () => {
     expect(res.status(), `Expected 200 on webhook POST, got ${res.status()}`).toBe(200);
 
     // Poll DB briefly — handler writes synchronously but let's not race.
+    // expect.poll retries the query on its own interval (no hand-rolled
+    // setTimeout sleep) until the license row lands or it times out.
     let license = null;
-    for (let i = 0; i < 10; i++) {
+    await expect.poll(async () => {
       const rows = await dbHelper.query(
         `SELECT license_key, plan, issued_to_email FROM licenses
           WHERE LOWER(issued_to_email) = LOWER($1)
           ORDER BY issued_at DESC LIMIT 1`,
         [LICENSE_EMAIL],
       );
-      if (rows.length > 0) { license = rows[0]; break; }
-      await new Promise(r => setTimeout(r, 200));
-    }
+      if (rows.length > 0) license = rows[0];
+      return rows.length;
+    }, {
+      message: `Expected a license row for ${LICENSE_EMAIL}`,
+      timeout: 5_000,
+      intervals: [200],
+    }).toBeGreaterThan(0);
 
     expect(license, `Expected a license row for ${LICENSE_EMAIL}`).not.toBeNull();
     expect(license.license_key).toMatch(/^SHENMAY-[A-F0-9-]+$/);
