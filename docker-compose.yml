@@ -68,6 +68,9 @@ services:
       WIDGET_CHAT_RATE_LIMIT_MAX: ${WIDGET_CHAT_RATE_LIMIT_MAX:-100}
       WIDGET_CHAT_PER_SESSION_MAX: ${WIDGET_CHAT_PER_SESSION_MAX:-30}
       WIDGET_CHAT_PER_TENANT_MAX: ${WIDGET_CHAT_PER_TENANT_MAX:-1000}
+      # Max recent conversation turns replayed to the LLM per chat call (T14);
+      # older context is carried by the summarised session history. Default 20.
+      WIDGET_LLM_HISTORY_TURNS: ${WIDGET_LLM_HISTORY_TURNS:-20}
       # Brand-learning worker cadence (ms). Default = 24h = 86400000.
       # Empty value falls through to the code default — see
       # server/src/services/brandLearning/worker.js. Do not set a hardcoded

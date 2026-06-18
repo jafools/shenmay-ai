@@ -388,6 +388,67 @@ test('missing session context returns not_found (route maps to 404)', async () =
   assertEqual(result.kind, 'not_found', 'kind should be not_found');
 });
 
+section('history budget (T14)');
+
+function mkHistory(n) {
+  // Alternating customer/agent starting on the customer's first message, which
+  // is how a real conversation is stored (oldest → newest).
+  return Array.from({ length: n }, (_, i) => ({
+    role: i % 2 === 0 ? 'customer' : 'agent',
+    content: `m${i}`,
+  }));
+}
+
+test('capHistory returns history unchanged when under the limit', async () => {
+  const { capHistory } = loadChatService({ db: makeDb() });
+  const out = capHistory(mkHistory(4), 6);
+  assertEqual(out.length, 4, 'all messages kept under the limit');
+  assertEqual(out[0].content, 'm0', 'oldest message retained');
+});
+
+test('capHistory keeps only the most recent N messages when over the limit', async () => {
+  const { capHistory } = loadChatService({ db: makeDb() });
+  const out = capHistory(mkHistory(20), 6); // slice(-6) → m14..m19, m14 is a customer turn
+  assertEqual(out.length, 6, 'capped to the limit');
+  assertEqual(out[0].role, 'customer', 'window starts on a user turn');
+  assertEqual(out[0].content, 'm14', 'kept the most recent window');
+  assertEqual(out[5].content, 'm19', 'newest message retained');
+});
+
+test('capHistory drops a leading agent message so the window stays user-first', async () => {
+  const { capHistory } = loadChatService({ db: makeDb() });
+  // [c0, a1, c2, a3] capped to 3 → slice(-3) = [a1, c2, a3] → drop leading agent → [c2, a3]
+  const out = capHistory([
+    { role: 'customer', content: 'c0' },
+    { role: 'agent',    content: 'a1' },
+    { role: 'customer', content: 'c2' },
+    { role: 'agent',    content: 'a3' },
+  ], 3);
+  assertEqual(out.length, 2, 'leading agent dropped from the window');
+  assertEqual(out[0].role, 'customer', 'window starts on a user turn');
+  assertEqual(out[0].content, 'c2', 'leading agent a1 removed');
+});
+
+test('handleMessage replays only the capped window + the new user message', async () => {
+  process.env.WIDGET_LLM_HISTORY_TURNS = '3'; // → 6 messages
+  let captured = null;
+  const db = makeDb(aiModeHandler({ existingMessages: mkHistory(20) }));
+  const chatService = loadChatService({
+    db,
+    llm: { getAgentResponse: async ({ messages }) => { captured = messages; return 'ok'; } },
+  });
+
+  const result = await chatService.handleMessage({ db, ...baseArgs }); // isAnonymous → no memory FAF
+  delete process.env.WIDGET_LLM_HISTORY_TURNS;
+
+  assertEqual(result.kind, 'reply', 'kind should be reply');
+  assert(captured, 'getAgentResponse received the messages array');
+  assertEqual(captured.length, 7, '6 capped history messages + 1 new user message');
+  assertEqual(captured[0].role, 'user', 'first replayed message is a user turn');
+  assertEqual(captured[6].role, 'user', 'last message is the new user turn');
+  assertEqual(captured[6].content, 'hello there', 'new user message appended verbatim');
+});
+
 // ── Run queue ────────────────────────────────────────────────────────────────
 
 (async () => {

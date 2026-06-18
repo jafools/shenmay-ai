@@ -50,6 +50,42 @@ const { NOTIFICATION_TYPES } = require('../config/plans');
 const { isAnonVisitorEmail } = require('../constants/anonDomains');
 const { renderBrandSoulForPrompt } = require('../services/brandLearning');
 
+// ── LLM history budget (audit M9 / T14) ─────────────────────────────────────
+// Cap how many of the CURRENT conversation's turns are replayed to the LLM each
+// call. Without a cap, every message in a long-running conversation is resent
+// untruncated on every turn → per-turn tokens grow linearly (quadratic
+// cumulative spend on a tenant's BYOK key) until the conversation eventually
+// overruns the model's context window and every subsequent message hard-fails.
+//
+// Long-tail context is NOT lost: the system prompt already carries summarised
+// session history (promptBuilder.buildConversationHistoryBlock caps to the last
+// 5 sessions), and memoryUpdater rolls live conversation into those summaries.
+// So "memory file + last N turns" is the contract — recent verbatim turns here,
+// older context via the summary. One turn ≈ a customer message + an agent reply.
+const MAX_HISTORY_TURNS    = Math.max(1, parseInt(process.env.WIDGET_LLM_HISTORY_TURNS || '20', 10) || 20);
+const MAX_HISTORY_MESSAGES = MAX_HISTORY_TURNS * 2;
+
+/**
+ * Trim conversation history to the most recent `maxMessages`, preserving a
+ * valid LLM message window. Pure — no I/O.
+ *
+ * The Anthropic Messages API requires the first message to be a `user` turn and
+ * the turns to alternate. The full history always starts on the customer's
+ * first message, but slicing a tail can land on an agent reply, so drop any
+ * leading agent message(s) after slicing to keep the window user-first.
+ *
+ * @param {Array<{role:string, content:string}>} messages  ordered oldest→newest, DB roles ('customer'/'agent')
+ * @param {number} maxMessages
+ * @returns {Array<{role:string, content:string}>}
+ */
+function capHistory(messages, maxMessages) {
+  if (messages.length <= maxMessages) return messages;
+  const windowed = messages.slice(-maxMessages);
+  let start = 0;
+  while (start < windowed.length && windowed[start].role !== 'customer') start++;
+  return windowed.slice(start);
+}
+
 // ── In-app notification helper ─────────────────────────────────────────────
 // Fire-and-forget. Errors are swallowed so they never interrupt the request.
 // Formerly inlined in routes/widget.js where it closed over the module-level
@@ -284,8 +320,11 @@ async function handleMessage({ db, tenantId, customerId, conversationId, isAnony
   }
 
   // 6. Build LLM messages array
+  // Replay only the most recent turns (T14) — older context is carried by the
+  // summarised session history injected into the system prompt above.
+  const recentMessages = capHistory(existingMessages, MAX_HISTORY_MESSAGES);
   const llmMessages = [
-    ...existingMessages.map(m => ({
+    ...recentMessages.map(m => ({
       role:    m.role === 'customer' ? 'user' : 'assistant',
       content: m.content,
     })),
@@ -490,4 +529,4 @@ async function handleMessage({ db, tenantId, customerId, conversationId, isAnony
   return { kind: 'reply', role: 'agent', content: agentResponse, conversation_id: conversation_id };
 }
 
-module.exports = { handleMessage };
+module.exports = { handleMessage, capHistory };
