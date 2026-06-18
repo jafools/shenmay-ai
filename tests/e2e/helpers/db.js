@@ -47,20 +47,32 @@ async function query(sql, params = []) {
 }
 
 /**
- * Look up a tenant_admin's email_verification_token.
- * Returns null if not found or already verified.
+ * Plant a known email-verification token for an unverified admin and return the
+ * RAW value to submit to /verify.
+ *
+ * The server stores a SHA-256 *digest* of the token (it hashes on write), so the
+ * raw token can no longer be read back from the DB. We therefore write a hash we
+ * control and hand back its preimage. This still exercises /verify's hash-lookup
+ * + JWT issuance end-to-end (the read side); the register write side — that the
+ * stored value is the hash of the emailed token — is covered by the onboard
+ * unit tests (tests/onboard-token-hashing.test.js).
+ *
+ * Returns null if no matching unverified admin exists.
  */
-async function getEmailVerificationToken(email) {
+async function planEmailVerificationToken(email) {
+  const crypto = require('crypto');
+  const raw  = crypto.randomBytes(32).toString('hex');
+  const hash = crypto.createHash('sha256').update(raw).digest('hex');
   const rows = await query(
-    `SELECT email_verification_token
-       FROM tenant_admins
+    `UPDATE tenant_admins
+        SET email_verification_token   = $2,
+            email_verification_expires = NOW() + INTERVAL '24 hours'
       WHERE LOWER(email) = LOWER($1)
-        AND email_verification_token IS NOT NULL
-      ORDER BY email_verification_expires DESC
-      LIMIT 1`,
-    [email],
+        AND email_verified = false
+      RETURNING id`,
+    [email, hash],
   );
-  return rows[0]?.email_verification_token || null;
+  return rows.length ? raw : null;
 }
 
 /**
@@ -127,7 +139,7 @@ async function close() {
 
 module.exports = {
   query,
-  getEmailVerificationToken,
+  planEmailVerificationToken,
   getPortalLoginToken,
   seedLicense,
   cleanupBySuffix,

@@ -28,6 +28,17 @@ const { isSelfHosted, PLAN_LIMITS } = require('../config/plans');
 const PORTAL_JWT_SECRET = process.env.JWT_SECRET || 'shenmay-dev-secret';
 const PORTAL_JWT_EXPIRY = process.env.JWT_EXPIRY  || '7d';
 
+// Email-verification and password-reset tokens are stored as a SHA-256 digest,
+// never plaintext, so a read-only DB compromise can't use a leaked token to
+// verify an email or reset a password. The raw 256-bit token is emailed to the
+// user; only its hash is persisted and compared on lookup. SHA-256 (not bcrypt)
+// is correct here — the token is already high-entropy and we need a fast,
+// indexable equality match. (Any in-flight plaintext token invalidates on
+// deploy — fail-safe; reset tokens expire in 1h, verify in 24h.)
+function hashToken(token) {
+  return crypto.createHash('sha256').update(String(token)).digest('hex');
+}
+
 // Allowed vertical values
 const VALID_VERTICALS = [
   'financial',
@@ -208,7 +219,7 @@ router.post('/register', async (req, res, next) => {
         first_name || '',
         last_name  || '',
         clientIp,
-        verificationToken,
+        hashToken(verificationToken),
         verificationExpires,
         newsletter_opt_in ? true : false,
       ]
@@ -296,7 +307,7 @@ router.get('/verify/:token', async (req, res, next) => {
        JOIN tenants t ON a.tenant_id = t.id
        WHERE a.email_verification_token = $1
          AND t.is_active = true`,
-      [token]
+      [hashToken(token)]
     );
 
     if (rows.length === 0) {
@@ -384,7 +395,7 @@ router.post('/resend-verification', async (req, res, next) => {
        SET email_verification_token   = $1,
            email_verification_expires = $2
        WHERE id = $3`,
-      [newToken, newExpires, admin.id]
+      [hashToken(newToken), newExpires, admin.id]
     );
 
     // Fire-and-forget — don't hold the response for SMTP.
@@ -510,7 +521,7 @@ router.post('/forgot-password', async (req, res, next) => {
        SET password_reset_token   = $1,
            password_reset_expires = $2
        WHERE id = $3`,
-      [resetToken, resetExpires, admin.id]
+      [hashToken(resetToken), resetExpires, admin.id]
     );
 
     // Fire-and-forget — the response is identical for "email sent" and
@@ -546,7 +557,7 @@ router.post('/reset-password', async (req, res, next) => {
       `SELECT id, email, first_name, password_reset_expires
        FROM tenant_admins
        WHERE password_reset_token = $1`,
-      [token]
+      [hashToken(token)]
     );
 
     if (rows.length === 0) {

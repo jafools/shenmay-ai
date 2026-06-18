@@ -9,7 +9,8 @@ const { isOnprem, hasDbAccess } = require('./helpers/mode');
  * Flow exercised:
  *   1. /signup → fill form with unique company + email
  *   2. Submit → server returns `pending_verification: true`
- *   3. Spec queries DB for the email_verification_token (skips real email)
+ *   3. Spec plants a known verification token in the DB (server stores only a
+ *      SHA-256 hash, so the raw token can't be read back; skips real email)
  *   4. /verify/:token → token exchange → JWT stored + redirect to /onboarding
  *   5. Token persisted in localStorage (ready for subsequent protected calls)
  *
@@ -87,11 +88,11 @@ test.describe('Signup funnel — /signup → verify → /onboarding', () => {
     await expect(page.locator('body')).toContainText(TEST_EMAIL);
   });
 
-  test('email verification token is queryable from DB', async () => {
+  test('email verification token can be planted in the DB', async () => {
     // This step assumes we can reach the DB. If not (remote run), skip.
     let token;
     try {
-      token = await dbHelper.getEmailVerificationToken(TEST_EMAIL);
+      token = await dbHelper.planEmailVerificationToken(TEST_EMAIL);
     } catch (err) {
       test.skip(true, `DB unreachable in this run (${err.message}) — can't verify token flow.`);
       return;
@@ -104,7 +105,7 @@ test.describe('Signup funnel — /signup → verify → /onboarding', () => {
   test('visiting /verify/:token lands on /onboarding with a valid session', async ({ page, context }) => {
     let token;
     try {
-      token = await dbHelper.getEmailVerificationToken(TEST_EMAIL);
+      token = await dbHelper.planEmailVerificationToken(TEST_EMAIL);
     } catch (err) {
       test.skip(true, `DB unreachable — skipping verify-token navigation (${err.message}).`);
       return;
