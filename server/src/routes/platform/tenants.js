@@ -42,8 +42,6 @@ router.get('/', async (req, res, next) => {
 router.post('/', async (req, res, next) => {
   const client = await db.pool.connect();
   try {
-    await client.query('BEGIN');
-
     const {
       // Tenant basics
       name,
@@ -88,6 +86,12 @@ router.post('/', async (req, res, next) => {
     if (slugCheck.length > 0) {
       return res.status(409).json({ error: 'A tenant with this slug already exists' });
     }
+
+    // All validation passed — open the transaction only now. Starting BEGIN
+    // earlier meant an early `return` above (bad slug / duplicate) released the
+    // pooled client back with an open transaction (the finally always releases,
+    // but never ROLLBACKs), so the next borrower could inherit an open BEGIN.
+    await client.query('BEGIN');
 
     // Build default vertical_config if not provided
     const defaultVerticalConfig = {

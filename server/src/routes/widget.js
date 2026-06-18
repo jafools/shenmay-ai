@@ -794,7 +794,12 @@ router.post('/end-session', async (req, res, next) => {
     if (!is_anonymous) {
       const { rows: tenantRows } = await db.query(
         'SELECT tenant_id FROM customers WHERE id = $1', [customer_id]
-      ).catch(() => ({ rows: [] }));
+      ).catch((err) => {
+        // Best-effort — a failed lookup just skips the webhook, but log it so a
+        // persistent DB problem isn't invisible (was a silent swallow).
+        console.error('[Widget] end-session webhook tenant lookup failed:', err.message);
+        return { rows: [] };
+      });
       if (tenantRows[0]) {
         fireWebhooks(tenantRows[0].tenant_id, 'session.ended', {
           customer_id,
