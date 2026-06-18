@@ -2,7 +2,7 @@
 
 > *Känn mej* ("know me" in Swedish, pronounced *Shen-may*) — B2B platform for deploying persistent, personalized AI agents that deeply understand each customer.
 
-**Status:** v3.3.0 in production at [shenmay.ai](https://shenmay.ai). Three deployment modes: multi-tenant SaaS, single-tenant self-hosted, and license master.
+**Status:** v3.6.2 in production at [shenmay.ai](https://shenmay.ai). Three deployment modes: multi-tenant SaaS, single-tenant self-hosted, and license master.
 
 ## What is it?
 
@@ -49,12 +49,15 @@ npm run dev           # server :3001, client :5173 (with /api proxy)
 
 ```bash
 npm run build         # client production bundle
-npm test              # tokenizer + integration tests (needs Postgres)
+npm run test:unit     # Node unit suites in /tests (no DB required)
+npm test              # the unit suites + tests/integration.test.js (needs Postgres)
 npm run lint          # ESLint across server + client
-npm run test:e2e      # Playwright E2E suite (9 specs)
+npm run test:e2e      # Playwright E2E suite (specs in tests/e2e)
 ```
 
-The E2E suite runs in CI on every PR ([`ci.yml`](.github/workflows/ci.yml)) against a fresh Postgres **and** against a live `docker-compose.selfhosted.yml` stack, covering both SaaS and on-prem customer journeys. A 5×5 repeatability matrix ([`e2e-repeatability.yml`](.github/workflows/e2e-repeatability.yml)) gates every release tag — 10 parallel cells must all pass before cutting `vX.Y.Z`.
+`npm run test:unit` runs the standalone Node test files in [`tests/`](tests/) (tokenizer/prompt-builder, engine, brand-learning, OpenAI adapter, webhook SSRF, owner-gate, license, observability, chat service). `npm test` adds [`tests/integration.test.js`](tests/integration.test.js), which needs a live Postgres.
+
+The Playwright E2E suite ([`tests/e2e/`](tests/e2e)) runs in CI on every PR ([`ci.yml`](.github/workflows/ci.yml)) against a fresh Postgres **and** against a live `docker-compose.selfhosted.yml` stack, covering both SaaS and on-prem customer journeys. A 5×5 repeatability matrix ([`e2e-repeatability.yml`](.github/workflows/e2e-repeatability.yml)) gates every release tag — 10 parallel cells must all pass before cutting `vX.Y.Z`.
 
 ## Project Layout
 
@@ -72,9 +75,9 @@ shenmay-ai/
 │       ├── pages/shenmay/         Auth pages (login, signup, verify-email, onboarding, …)
 │       └── pages/shenmay/dashboard/   Tenant dashboard (settings, conversations, analytics, …)
 ├── tests/
-│   ├── e2e/                       Playwright specs (SaaS + on-prem modes, 9 specs)
-│   ├── integration.test.js        Server integration tests
-│   └── tokenizer.test.js          Prompt-builder unit tests
+│   ├── e2e/                       Playwright specs (SaaS + on-prem customer journeys)
+│   ├── *.test.js                  Node unit suites (tokenizer, engine, brand-learning, chatService, …)
+│   └── integration.test.js        Server integration tests (needs Postgres)
 ├── docs/
 │   ├── RELEASING.md               Full release + deploy procedure
 │   ├── SESSION_NOTES.md           Live dev-session handoff
