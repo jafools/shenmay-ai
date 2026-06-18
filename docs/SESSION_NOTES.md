@@ -5,6 +5,26 @@
 
 ---
 
+## Last updated: 2026-06-18 — **Audit sprint: Milestone 2 COMPLETE (5/5) — T11b + T14 merged; all High + 14 Medium now resolved on main (NOT released)**
+
+Closed the last two Milestone-2 tasks from the 2026-06-10 principal audit. Both branch → PR → CI 5/5 → squash-merge to `main` (`:edge`/staging only). **Customers still on `v3.6.2` — no tags cut.** Tracker `docs/AUDIT-2026-06-10.md` updated.
+
+### Merged this session (→ staging only)
+- **[#231](https://github.com/jafools/shenmay-ai/pull/231)** (M2/T11b): extracted `chatService.handleMessage()` from the 437-line `POST /api/widget/chat` handler (M8) into new **`server/src/engine/chatService.js`** — the live-chat hot path. The route is now a thin shell (middleware + sanitization + a discriminated-result mapping). Service returns `{ kind: 'not_found' | 'human' | 'reply' }`; `db` is injected as a param (unit-testable, no PG); `BreachError`/`NoApiKeyError` are swallowed → safe customer reply, every other LLM error is rethrown → `next(err)` → 500 (byte-equivalent to before). `createNotification` moved into the service taking `db` explicitly (was module-private). New **`tests/chatService.test.js`** (13): human-mode (incl. asserting the in-app notification fan-out fires), no-key, breach (both string sites pinned), tools + standard happy paths, generic-error rethrow, not_found. **The extraction plan was adversarially pre-reviewed via an ultracode workflow** (6 contract-mappers → synthesis → adversarial verify) and checkpoint-approved before any hot-path edit; the reviewer's B1–B3 + S1–S5 fixes were folded in (notably B3: `createNotification` must be redefined taking `db` or the `setImmediate` fan-out silently `ReferenceError`s). Conservative scope — the standard-path `BreachError` swallow stays inside `llmService.getAgentResponse` (de-dup deferred). Now-dead `/chat`-only imports trimmed from `widget.js` (grep-verified unused elsewhere).
+- **[#232](https://github.com/jafools/shenmay-ai/pull/232)** (M2/T14): LLM history budget (M9). New `capHistory()` in `chatService` caps the within-conversation turns replayed to the LLM to **`WIDGET_LLM_HISTORY_TURNS`** (default 20 ≈ 40 messages, env-overridable). Long-tail context is unaffected — it's carried by the summarised session history already injected into the system prompt (`promptBuilder.buildConversationHistoryBlock`, capped to 5 sessions). This is Q5's resolved "memory file + last N turns" contract. `capHistory` drops a leading agent message after slicing so the replayed window stays `user`-first (Anthropic Messages API requirement — a sliced tail can otherwise start on an assistant turn). `WIDGET_LLM_HISTORY_TURNS` added to **both** compose files (env-forwarding lint). +4 unit tests (chatService suite now 17).
+
+### Net result
+**Milestones 0 + 1 + 2 are all complete** — the 1 High and all 14 Medium audit findings are resolved on `main`. Remaining audit work is **Milestone 3** (T15–T20 docs/polish) only.
+
+### Open / next
+- **Milestone 3** — T15–T20 (README refresh, archive stale root docs, retention-table pruning, e2e de-flake, client vitest seeds). Mostly independent tasks.
+- **Before a release tag:** staging canary (the T11b chat extraction + a T14 multi-turn conversation to confirm the agent still references recent context with the cap) → tag → **one-time unbind of all currently-bound licenses** (`docs/RUNBOOK-LICENSE-REBIND.md`, T9) → Hetzner deploy. Migrations 044 + 045 + 046 auto-apply on backend boot.
+
+### New gotcha logged
+Windowing LLM chat history to the last N turns can land the window's first message on an assistant turn → the Anthropic Messages API rejects it (first message must be `user`). Drop the leading assistant after slicing; pin with a test. (Memory: `feedback_llm_history_cap_user_first_guard`.)
+
+---
+
 ## Last updated: 2026-06-17 (PM) — **Audit sprint cont'd: Milestone 1 COMPLETE (6/6) + Milestone 2 4/5 — all merged to main (NOT released)**
 
 Continuation of the 2026-06-10 principal-audit fix-sprint (the entry below covers M0 + M1 5/6). This session finished M1 (T9) and banked the lower-risk M2 tasks. **5 PRs, all CI 5/5, squash-merged to `main` → `:edge`/staging only. Customers still on `v3.6.2` — no tags cut.** Tracker of record: `docs/AUDIT-2026-06-10.md` (statuses now updated).
