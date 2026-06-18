@@ -24,6 +24,20 @@
  *    yet anonymized_at. Anonymisation replaces all PII with placeholder values
  *    while keeping the customer row for referential integrity.
  *
+ * 4. HOUSEKEEPING TABLE PRUNE
+ *    Trims unbounded operational tables that otherwise grow forever. These
+ *    hold transient state with no analytics or compliance value past their
+ *    useful window, so we delete (not anonymise) rows older than a
+ *    conservative, env-overridable retention window:
+ *      - notifications          → older than NOTIFICATION_RETENTION_DAYS (90d)
+ *      - portal_login_tokens     → expired past PORTAL_TOKEN_RETENTION_DAYS (7d)
+ *      - portal_sessions         → expired past PORTAL_SESSION_RETENTION_DAYS (30d)
+ *      - processed_stripe_events → older than STRIPE_EVENT_RETENTION_DAYS (90d)
+ *    The Stripe ledger window stays well clear of Stripe's ~3-day retry horizon
+ *    so replay protection for any event Stripe could still redeliver is intact.
+ *    Login tokens / sessions are pruned on their own expires_at, never on rows
+ *    still inside their TTL.
+ *
  * What it does NOT do:
  *   - Touch audit_logs (legally required 7-year retention)
  *   - Touch conversations metadata (summary, topics, sentiment)
@@ -65,6 +79,12 @@ async function runRetentionCycle() {
     await processErasureQueue();
   } catch (err) {
     console.error('[DataRetention] Erasure queue error:', err.message);
+  }
+
+  try {
+    await purgeHousekeepingTables();
+  } catch (err) {
+    console.error('[DataRetention] Housekeeping prune error:', err.message);
   }
 
   const durationMs = Date.now() - startedAt.getTime();
@@ -360,6 +380,157 @@ async function resetExpiredUsage() {
   }
 }
 
+// ── 5. HOUSEKEEPING TABLE PRUNE ───────────────────────────────────────────────
+//
+// Several operational tables accumulate transient rows that are never cleaned
+// up at write time, so they grow without bound. None hold analytics or
+// compliance value past their useful window (audit_logs, which IS legally
+// retained, is deliberately NOT in this list). We delete — not anonymise —
+// rows past a conservative, env-overridable retention window.
+//
+// Windows are expressed in whole days and clamped to a sane floor so a typo'd
+// env var can never widen the window to 0 (which would prune live rows) or go
+// negative. Each spec deletes on the column that actually governs the row's
+// usefulness: created_at for notifications, expires_at for the auth tokens /
+// sessions (never their created_at — a long-lived session is still valid until
+// it expires), processed_at for the Stripe ledger.
+
+// Conservative defaults (days). Overridable per deployment via env.
+const NOTIFICATION_RETENTION_DAYS    = parseRetentionDays('NOTIFICATION_RETENTION_DAYS', 90);
+const PORTAL_TOKEN_RETENTION_DAYS    = parseRetentionDays('PORTAL_TOKEN_RETENTION_DAYS', 7);
+const PORTAL_SESSION_RETENTION_DAYS  = parseRetentionDays('PORTAL_SESSION_RETENTION_DAYS', 30);
+const STRIPE_EVENT_RETENTION_DAYS    = parseRetentionDays('STRIPE_EVENT_RETENTION_DAYS', 90);
+
+/**
+ * Read a whole-day retention window from an env var, falling back to a default
+ * and clamping to a floor of 1 day so a malformed/zero/negative value can never
+ * cause live rows to be pruned. Pure — no I/O, safe to unit-test.
+ *
+ * @param {string} envVar       — process.env key to read
+ * @param {number} defaultDays  — fallback when unset/invalid
+ * @param {Object} [env]        — env source (defaults to process.env; injectable for tests)
+ * @returns {number} clamped integer day count (>= 1)
+ */
+function parseRetentionDays(envVar, defaultDays, env = process.env) {
+  const raw = parseInt(env[envVar], 10);
+  const days = Number.isFinite(raw) && raw > 0 ? raw : defaultDays;
+  return Math.max(1, days);
+}
+
+/**
+ * Build the ordered list of housekeeping prune specs. Pure — returns the exact
+ * table / parameterized SQL / params / window for each prune so the SQL and the
+ * retention windows can be unit-tested without a database. Each cutoff is
+ * `now - <windowDays>` computed once for a stable, testable result.
+ *
+ * The DELETE predicates are all `<column> < $1` with a single timestamp param,
+ * so they are fully parameterized (no string interpolation of any value).
+ *
+ * @param {Object} [opts]
+ * @param {Date}   [opts.now]   — reference "now" (defaults to new Date(); injectable for tests)
+ * @param {Object} [opts.days]  — { notification, portalToken, portalSession, stripeEvent } overrides
+ * @returns {Array<{label,table,eventType,resourceType,sql,params,windowDays}>}
+ */
+function buildHousekeepingPrunes({ now = new Date(), days = {} } = {}) {
+  const win = {
+    notification : days.notification  ?? NOTIFICATION_RETENTION_DAYS,
+    portalToken  : days.portalToken   ?? PORTAL_TOKEN_RETENTION_DAYS,
+    portalSession: days.portalSession ?? PORTAL_SESSION_RETENTION_DAYS,
+    stripeEvent  : days.stripeEvent   ?? STRIPE_EVENT_RETENTION_DAYS,
+  };
+
+  const cutoff = (windowDays) => {
+    const d = new Date(now.getTime());
+    d.setDate(d.getDate() - windowDays);
+    return d.toISOString();
+  };
+
+  return [
+    {
+      // In-app advisor notifications. The portal only ever shows the latest 30,
+      // so anything older than the window is already invisible. Pruned on
+      // created_at — read/unread state is irrelevant once the row is this old.
+      label       : 'notifications',
+      table       : 'notifications',
+      eventType   : 'retention.notifications_purged',
+      resourceType: 'notifications',
+      windowDays  : win.notification,
+      sql         : `DELETE FROM notifications WHERE created_at < $1`,
+      params      : [cutoff(win.notification)],
+    },
+    {
+      // Single-use magic-link tokens (15-min TTL). Pruned only once they have
+      // been expired for the window — never while still inside expires_at.
+      label       : 'portal_login_tokens',
+      table       : 'portal_login_tokens',
+      eventType   : 'retention.portal_tokens_purged',
+      resourceType: 'portal_login_tokens',
+      windowDays  : win.portalToken,
+      sql         : `DELETE FROM portal_login_tokens WHERE expires_at < $1`,
+      params      : [cutoff(win.portalToken)],
+    },
+    {
+      // Authenticated portal sessions (30-day TTL). Pruned on expires_at so a
+      // still-valid long-lived session is never cut short; only sessions that
+      // expired more than the window ago are removed.
+      label       : 'portal_sessions',
+      table       : 'portal_sessions',
+      eventType   : 'retention.portal_sessions_purged',
+      resourceType: 'portal_sessions',
+      windowDays  : win.portalSession,
+      sql         : `DELETE FROM portal_sessions WHERE expires_at < $1`,
+      params      : [cutoff(win.portalSession)],
+    },
+    {
+      // Stripe webhook idempotency ledger (#200/#214). Stripe never retries a
+      // webhook beyond ~3 days, so a 90-day default keeps replay protection for
+      // every event Stripe could still redeliver while letting old ids drop.
+      label       : 'processed_stripe_events',
+      table       : 'processed_stripe_events',
+      eventType   : 'retention.stripe_events_purged',
+      resourceType: 'processed_stripe_events',
+      windowDays  : win.stripeEvent,
+      sql         : `DELETE FROM processed_stripe_events WHERE processed_at < $1`,
+      params      : [cutoff(win.stripeEvent)],
+    },
+  ];
+}
+
+/**
+ * Execute the housekeeping prunes. Cross-tenant / global tables, so each prune
+ * runs once (no per-tenant loop) and logs a single system audit row. Failures
+ * in one prune are caught so the rest still run.
+ */
+async function purgeHousekeepingTables() {
+  const prunes = buildHousekeepingPrunes();
+  let totalDeleted = 0;
+
+  for (const prune of prunes) {
+    try {
+      const { rowCount } = await db.query(prune.sql, prune.params);
+      if (rowCount === 0) continue;
+
+      totalDeleted += rowCount;
+
+      writeAuditLog({
+        actorType   : 'system',
+        eventType   : prune.eventType,
+        resourceType: prune.resourceType,
+        description : `Pruned ${rowCount} ${prune.label} rows older than ${prune.windowDays} days`,
+        success     : true,
+      });
+
+      console.log(`[DataRetention] Pruned ${rowCount} ${prune.label} rows older than ${prune.windowDays} days`);
+    } catch (err) {
+      console.error(`[DataRetention] Failed to prune ${prune.label}:`, err.message);
+    }
+  }
+
+  if (totalDeleted > 0) {
+    console.log(`[DataRetention] Total housekeeping rows pruned: ${totalDeleted}`);
+  }
+}
+
 // ── Module exports ────────────────────────────────────────────────────────────
 
 let _timer = null;
@@ -392,4 +563,12 @@ function stop() {
 process.on('SIGTERM', stop);
 process.on('SIGINT', stop);
 
-module.exports = { start, stop, anonymizeCustomer, runRetentionCycle };
+module.exports = {
+  start,
+  stop,
+  anonymizeCustomer,
+  runRetentionCycle,
+  // Exported for unit testing (pure — no DB):
+  parseRetentionDays,
+  buildHousekeepingPrunes,
+};
