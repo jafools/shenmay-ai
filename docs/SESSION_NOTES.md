@@ -5,6 +5,30 @@
 
 ---
 
+## Last updated: 2026-06-18 (PM) — **Audit sprint COMPLETE: Milestone 3 merged (T15–T20) — the entire 2026-06-10 audit is now resolved on main (NOT released)**
+
+Finished the audit fix-sprint. Milestone 3 (T15–T20) shipped this session via a parallel fan-out of the independent tasks + a deliberate split of T17. **6 PRs, all CI 5/5, squash-merged to `main` → `:edge`/staging only. Customers still on `v3.6.2` — no tags cut.** Tracker `docs/AUDIT-2026-06-10.md` fully updated.
+
+### Merged this session (→ staging only)
+- **[#234](https://github.com/jafools/shenmay-ai/pull/234)** (M3/T20): client vitest seeds (shenmayApi error paths + SubscriptionGate gating, 7 tests) + wired into the `client-build` CI job; fixed the stale "vitest runs" comment.
+- **[#235](https://github.com/jafools/shenmay-ai/pull/235)** (M3/T19): replaced 9 hard `waitForTimeout` sleeps across the e2e specs with deterministic `waitForURL`/`waitForResponse`/`expect.poll`/locator waits (1 left with a comment — no positive signal). De-flakes the 5×5 gate.
+- **[#236](https://github.com/jafools/shenmay-ai/pull/236)** (M3/T18): retention job prunes `notifications` (90d) / `portal_login_tokens` (7d) / `portal_sessions` (30d) / `processed_stripe_events` (90d) on the correct timestamp columns; +18 unit tests. Stripe window stays clear of the ~3-day retry horizon.
+- **[#237](https://github.com/jafools/shenmay-ai/pull/237)** (M3/T15+T16): README version/test-suite refresh; archived 5 stale root docs + ROADMAP/FEATURES + 5 stale Nomii binaries to `docs/archive/` (kept the DPA + live legal `.docx`); `NOMII_LICENSE_MASTER`→`SHENMAY_LICENSE_MASTER`; fixed ROADMAP's dangling pointer.
+- **[#238](https://github.com/jafools/shenmay-ai/pull/238)** (M3/T17 cleanups): tools-routes swallow logged; `platform/tenants.js` txn-state leak closed (BEGIN after validation); trial-limit email now reads real `PLAN_LIMITS` (was hardcoded 1/20); widget end-session swallow logged; portal `/plans` numeric dedup; orphaned `promptBuilder.generateMockResponse` + its tests removed.
+- **[#239](https://github.com/jafools/shenmay-ai/pull/239)** (M3/T17 security): abuse limiter on `/resend-verification` + `/forgot-password` (index.js `emailSendLimiter`, env-overridable, CI=100); widget `/session/refresh` age cap (`WIDGET_REFRESH_GRACE_DAYS`, default 7) so an expired/stolen token can't be refreshed forever; public-portal `clientIp()` → `req.ip` (was spoofable `X-Forwarded-For[0]`). 2 new env vars in both compose files.
+
+### Fan-out mechanics
+T15/16, T18, T19, T20 were implemented by 4 parallel worktree-isolated agents (ultracode workflow), each opening its own PR; reviewed each diff + CI before merging. T17 was split (you chose this once the auth-critical half was visible): cleanups (#238) + security (#239).
+
+### Deferred — 2 documented Low follow-ups (NOT regressions)
+- **Reset/verify token hashing** (SHA-256 over the plaintext tokens). Correct fix, but the e2e signup-funnel reads the plaintext `email_verification_token` from the DB (`tests/e2e/helpers/db.js:53`) to complete a real verification — hashing breaks that + the 5×5 gate until there's a CI token-retrieval strategy (mail capture, or a non-prod token-exposure path). Spawned as a task chip; full plan in the tracker.
+- **conversations-routes ownership-guard dedup** — heterogeneous sites (some pure guards, some embedded in data queries); lowest value.
+
+### Status
+**The entire 2026-06-10 principal audit is resolved on `main`** — 1 High + 14 Medium + the actionable Lows, across M0+M1+M2+M3. Still `:edge`/staging only. **To release:** tag `vX.Y.Z` + dispatch the 5×5 gate + Hetzner deploy; **staging canary first** (widget chat T11b + multi-turn T14 + onboard auth T17) + one-time license unbind (`docs/RUNBOOK-LICENSE-REBIND.md`); migrations 044/045/046 auto-apply.
+
+---
+
 ## Last updated: 2026-06-18 — **Audit sprint: Milestone 2 COMPLETE (5/5) — T11b + T14 merged; all High + 14 Medium now resolved on main (NOT released)**
 
 Closed the last two Milestone-2 tasks from the 2026-06-10 principal audit. Both branch → PR → CI 5/5 → squash-merge to `main` (`:edge`/staging only). **Customers still on `v3.6.2` — no tags cut.** Tracker `docs/AUDIT-2026-06-10.md` updated.
