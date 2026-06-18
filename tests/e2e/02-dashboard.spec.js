@@ -84,8 +84,13 @@ test.describe('Dashboard Navigation', () => {
       window.history.pushState({}, '', '/dashboard/nonexistent-page');
       window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
     });
-    // React Router inner catch-all redirects back to /dashboard
-    await page.waitForTimeout(1000);
+    // React Router inner catch-all redirects back to /dashboard. Wait for the
+    // URL to settle on a real /dashboard route (no longer the nonexistent one)
+    // rather than sleeping a fixed beat.
+    await page.waitForURL((url) => {
+      const path = url.pathname;
+      return path.startsWith('/dashboard') && !path.includes('nonexistent-page');
+    }, { timeout: 10_000 });
     expect(page.url()).not.toContain('/login');
   });
 });

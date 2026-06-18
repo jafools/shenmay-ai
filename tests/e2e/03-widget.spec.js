@@ -95,7 +95,10 @@ test.describe('Widget — Embed & Launcher', () => {
       <script src="${API_BASE}/embed.js" data-widget-key="${widgetKey}"></script>
     </body></html>`;
     await page.setContent(html);
-    await page.waitForTimeout(2000);
+    // Wait for the launcher to be injected (deterministic signal that both
+    // embed.js executions have run) instead of a fixed sleep, then assert
+    // the guard collapsed the two injections into exactly one launcher.
+    await expect(page.locator(SEL_WIDGET.launcher).first()).toBeVisible({ timeout: 10_000 });
     const launchers = await page.locator(SEL_WIDGET.launcher).count();
     expect(launchers).toBe(1);
   });
@@ -195,17 +198,21 @@ test.describe('Widget — Authenticated Session', () => {
     const iframe = page.frameLocator(SEL_WIDGET.iframe);
     await expect(iframe.locator('#chat-wrapper')).toBeVisible({ timeout: 15_000 });
 
-    // Simulate SPA login — postMessage to identify user
+    // Simulate SPA login — postMessage to identify user. The embed forwards a
+    // shenmay:identify into the iframe, which fires POST /session/claim. Wait
+    // on that actual request (the real signal the handoff happened) instead of
+    // a fixed sleep — arm the wait BEFORE posting so we don't miss it.
+    const claimResponse = page.waitForResponse(
+      (resp) => resp.url().includes('/api/widget/session/claim'),
+      { timeout: 15_000 }
+    );
     await page.evaluate((email) => {
       window.postMessage(
         { type: 'shenmay:setUser', email, name: 'SPA User' },
         '*'
       );
     }, testEmail);
-
-    // The widget should send a shenmay:identify message into the iframe
-    // and claim the session. Wait a moment for the claim request.
-    await page.waitForTimeout(3000);
+    await claimResponse;
 
     // Widget should still be functional
     await expect(iframe.locator('#chat-wrapper')).toBeVisible();
@@ -258,13 +265,18 @@ test.describe('Widget — Authenticated Session', () => {
     const widgetReady  = chatReady.or(agentScreen).or(nameScreen);
     await expect(widgetReady.first()).toBeVisible({ timeout: 15_000 });
 
-    // Simulate logout
+    // Simulate logout. On logout the embed does a full iframe reload
+    // (iframe.src = buildWidgetUrl()), which re-navigates the widget frame.
+    // Wait on that navigation (the real "reload" signal) instead of a fixed
+    // sleep — arm the wait BEFORE posting so we don't miss the event.
+    const frameReloaded = page.waitForEvent('framenavigated', {
+      predicate: (frame) => frame.url().includes('/widget.html'),
+      timeout: 15_000,
+    });
     await page.evaluate(() => {
       window.postMessage({ type: 'shenmay:setUser', email: '', name: '' }, '*');
     });
-
-    // Widget should reload — panel closes and iframe src resets
-    await page.waitForTimeout(3000);
+    await frameReloaded;
     // After reload, launcher should still be present
     await expect(page.locator(SEL_WIDGET.launcher)).toBeVisible();
   });
@@ -283,7 +295,13 @@ test.describe('Widget — Close Button', () => {
     // exercising here simply isn't reachable. That's correct product
     // behaviour, not a regression; skip rather than fail. Checking the
     // id's visibility (not a text regex) avoids the always-in-DOM trap.
-    await page.waitForTimeout(2500);
+    //
+    // Wait for the widget to settle on one of its two terminal screens
+    // (chat-ready or at-capacity) instead of a fixed sleep, then branch.
+    await Promise.race([
+      iframe.locator('#chat-wrapper').waitFor({ state: 'visible', timeout: 15_000 }).catch(() => {}),
+      iframe.locator('#capacity-screen').waitFor({ state: 'visible', timeout: 15_000 }).catch(() => {}),
+    ]);
     const atCapacity = await iframe.locator('#capacity-screen').isVisible().catch(() => false);
     test.skip(atCapacity, 'Customer seat limit reached — close-button flow unavailable in capacity mode.');
 

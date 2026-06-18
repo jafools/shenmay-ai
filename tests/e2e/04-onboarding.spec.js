@@ -45,9 +45,11 @@ test.describe('Onboarding Wizard (authenticated)', () => {
   test('onboarding page loads for authenticated user', async ({ page }) => {
     await loginViaAPI(page);
     await page.goto('/onboarding');
-    // Should load the onboarding page (either show steps or redirect to dashboard)
-    await page.waitForTimeout(3000);
-    // If onboarding is already complete, user gets redirected to dashboard
+    // Should load the onboarding page (either show steps or redirect to
+    // dashboard if onboarding is already complete). Wait for the URL to settle
+    // on one of those two routes instead of a fixed sleep — this is exactly the
+    // condition the assertion below depends on.
+    await page.waitForURL(/\/(onboarding|dashboard)/, { timeout: 10_000 });
     const url = page.url();
     const isOnboarding = url.includes('/onboarding');
     const isDashboard = url.includes('/dashboard');
@@ -66,25 +68,30 @@ test.describe('Onboarding Wizard (authenticated)', () => {
 test.describe('Email Verification', () => {
   test('verify page with invalid token shows error', async ({ page }) => {
     await page.goto('/verify/invalid-token-abc123');
-    // Should show error or redirect
-    await page.waitForTimeout(3000);
     // The page either shows an error message anywhere in the body, or
     // redirects to login. We check the full body text (not getByText, which
     // throws on multiple matches in strict mode) so any of the legitimate
     // error messages counts: "Invalid or expired verification link" (happy
     // path), "Verification failed" (heading), "Too many requests" (rate
     // limiter kicks in during batched test runs).
-    const bodyText = (await page.textContent('body').catch(() => '')) || '';
-    const hasError = /invalid|expired|error|failed|too many/i.test(bodyText);
-    const onLogin = page.url().includes('/login');
-    expect(hasError || onLogin).toBe(true);
+    //
+    // Poll for that terminal condition instead of a fixed sleep — the verify
+    // request resolves asynchronously, so retry until the error text appears
+    // or we've landed on /login.
+    await expect.poll(async () => {
+      const bodyText = (await page.textContent('body').catch(() => '')) || '';
+      const hasError = /invalid|expired|error|failed|too many/i.test(bodyText);
+      const onLogin = page.url().includes('/login');
+      return hasError || onLogin;
+    }, { timeout: 10_000 }).toBe(true);
   });
 
   test('reset password page loads', async ({ page }) => {
     await page.goto('/reset-password');
-    await page.waitForTimeout(2000);
-    // Should show the reset password form or redirect
-    const url = page.url();
-    expect(url).toMatch(/\/(reset-password|login)/);
+    // Should show the reset password form or redirect to login. Wait for the
+    // URL to settle on one of those routes instead of a fixed sleep — covers a
+    // possible client-side redirect after mount.
+    await page.waitForURL(/\/(reset-password|login)/, { timeout: 10_000 });
+    expect(page.url()).toMatch(/\/(reset-password|login)/);
   });
 });
