@@ -54,7 +54,6 @@ const {
   buildCustomerDataBlock,
   buildConversationHistoryBlock,
   buildSessionRulesBlock,
-  generateMockResponse: pbMock,
 } = require('../server/src/engine/promptBuilder');
 
 const {
@@ -346,18 +345,6 @@ test('buildSessionRulesBlock lists remaining onboarding categories + the date', 
 test('buildSessionRulesBlock suppresses the greeting when the widget already greeted', () => {
   const out = buildSessionRulesBlock({ onboarding_status: 'complete' }, {}, '2026-06-17', true);
   assertContains(out, 'already displayed an opening greeting');
-});
-
-test('generateMockResponse handles a naming attempt by echoing the chosen name', () => {
-  const out = pbMock('Jane Doe', 'I think I will call you "Aria"', 'Aria');
-  assertContains(out, 'Aria');
-  assertContains(out, 'I love that');
-});
-
-test('generateMockResponse greets warmly on a hello', () => {
-  const out = pbMock('Jane Doe', 'hello there', 'Aria');
-  assertContains(out, 'Welcome back');
-  assertContains(out, 'Jane');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

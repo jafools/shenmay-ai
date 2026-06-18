@@ -410,8 +410,15 @@ router.post('/:toolId/test', async (req, res, next) => {
       return res.status(502).json({ error: `LLM error: ${llmErr.message}` });
     }
 
-    // 7. Count against quota (real API call)
-    try { await incrementMessageCount(req.portal.tenant_id); } catch (_) {}
+    // 7. Count against quota (real API call). Best-effort — a counter blip must
+    // not fail the tool test the operator is running — but log it so a
+    // persistently-failing increment (e.g. a broken subscriptions row) is
+    // visible rather than silently under-counting usage.
+    try {
+      await incrementMessageCount(req.portal.tenant_id);
+    } catch (err) {
+      console.error(`[Tools][test] message-count increment failed for tenant=${req.portal.tenant_id}: ${err.message}`);
+    }
 
     const firstInvocation = invocations[0] || null;
     return res.json({

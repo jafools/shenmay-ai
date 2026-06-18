@@ -629,44 +629,8 @@ RESPONSE LENGTH: Keep replies SHORT and conversational — 2-4 sentences is idea
 }
 
 
-// Mock LLM response — used when no API key is configured (local dev).
-function generateMockResponse(customerName, messageContent, agentDisplayName) {
-  const lowerMsg = messageContent.toLowerCase();
-  const firstName = customerName.split(' ')[0];
-  const agentName = agentDisplayName || 'your advisor';
-
-  // Detect naming attempt — customer is trying to give the agent a name
-  if (lowerMsg.includes('call you') || lowerMsg.includes('name you') || lowerMsg.includes('your name is') ||
-      lowerMsg.includes("i'll call you") || lowerMsg.includes("i will call you") || lowerMsg.includes("how about")) {
-    // Extract a likely name (last significant word or quoted word)
-    const quoted = messageContent.match(/["']([^"']+)["']/);
-    const suggestedName = quoted ? quoted[1] : messageContent.split(/\s+/).pop().replace(/[?.!,]/g, '');
-    return `Oh, I love that! "${suggestedName}" — it feels just right. Thank you, ${firstName}. From now on, I'm ${suggestedName}, and I'll be right here whenever you need me. Now, what would you like to talk about today?`;
-  }
-
-  if (lowerMsg.includes('hello') || lowerMsg.includes('hi') || lowerMsg.includes('hey')) {
-    return `Welcome back, ${firstName}! It's ${agentName} here. It's great to hear from you. How have things been since we last spoke? Is there anything specific on your mind today, or shall we pick up where we left off?`;
-  }
-
-  if (lowerMsg.includes('worried') || lowerMsg.includes('scared') || lowerMsg.includes('anxious') || lowerMsg.includes('concern')) {
-    return `I hear you, and those feelings are completely valid. Many people have similar concerns. Let's talk through what's on your mind — sometimes just laying it out together can help things feel more manageable. What's weighing on you the most right now?`;
-  }
-
-  if (lowerMsg.includes('advisor') || lowerMsg.includes('human') || lowerMsg.includes('speak to someone')) {
-    return `Absolutely — I'll connect you with your advisor right away. They'll be able to help with more specific guidance on this. Is there anything you'd like me to pass along to them so they have context when they reach out?`;
-  }
-
-  if (lowerMsg.includes('help') || lowerMsg.includes('what can you do')) {
-    return `I'm here to help you navigate your situation, ${firstName}. I know quite a bit about your background and goals from our conversations, so feel free to ask me anything — whether it's about your accounts, planning for the future, or just thinking through a decision. What would be most helpful to talk about today?`;
-  }
-
-  return `That's a great question, ${firstName}. Let me think through this with you. Based on what I know about your situation, here are some things to consider...\n\nCould you tell me a bit more about what prompted this? That will help me give you more relevant information.\n\n*As always, for specific decisions, your advisor is available to discuss the details with you.*`;
-}
-
-
 module.exports = {
   buildSystemPrompt,
-  generateMockResponse,
   buildIdentityBlock,
   buildComplianceBlock,
   buildCommunicationBlock,

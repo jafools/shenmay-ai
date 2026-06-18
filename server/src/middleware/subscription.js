@@ -218,7 +218,7 @@ async function sendLimitNotificationIfNeeded(tenantId) {
 
     if (rows.length === 0) return; // already notified, or not a trial plan
 
-    const { email, first_name, tenant_name } = rows[0];
+    const { email, first_name, tenant_name, plan } = rows[0];
 
     // Mark as notified BEFORE sending so a retry can't double-send
     await db.query(
@@ -227,7 +227,7 @@ async function sendLimitNotificationIfNeeded(tenantId) {
     );
 
     // Fire email async — don't block the request
-    sendTrialLimitEmail({ to: email, firstName: first_name, tenantName: tenant_name })
+    sendTrialLimitEmail({ to: email, firstName: first_name, tenantName: tenant_name, plan })
       .catch(err => console.error('[Subscription] Failed to send trial limit email:', err.message));
 
     // Also create an in-app notification so owners are warned even when SMTP

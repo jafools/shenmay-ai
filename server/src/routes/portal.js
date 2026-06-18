@@ -37,7 +37,7 @@ const router  = require('express').Router();
 const jwt     = require('jsonwebtoken');
 const db      = require('../db');
 const { getSubscription } = require('../middleware/subscription');
-const { UNRESTRICTED_PLANS } = require('../config/plans');
+const { UNRESTRICTED_PLANS, PLAN_LIMITS } = require('../config/plans');
 const { anonEmailNotLikeGuard, anonEmailLikeMatch } = require('../constants/anonDomains');
 
 const PORTAL_JWT_SECRET = process.env.JWT_SECRET || 'shenmay-dev-secret';
@@ -478,8 +478,8 @@ router.get('/plans', async (req, res) => {
         id: 'starter',
         name: 'Starter',
         price: '$49/mo',
-        max_customers: 50,
-        max_messages: 1000,
+        max_customers: PLAN_LIMITS.starter.max_customers,
+        max_messages: PLAN_LIMITS.starter.max_messages_month,
         managed_ai: false,
         features: [
           'Up to 50 customers',
@@ -493,8 +493,8 @@ router.get('/plans', async (req, res) => {
         id: 'growth',
         name: 'Growth',
         price: '$149/mo',
-        max_customers: 250,
-        max_messages: 5000,
+        max_customers: PLAN_LIMITS.growth.max_customers,
+        max_messages: PLAN_LIMITS.growth.max_messages_month,
         managed_ai: false,
         popular: true,
         features: [
@@ -510,8 +510,8 @@ router.get('/plans', async (req, res) => {
         id: 'professional',
         name: 'Professional',
         price: '$399/mo',
-        max_customers: 1000,
-        max_messages: 25000,
+        max_customers: PLAN_LIMITS.professional.max_customers,
+        max_messages: PLAN_LIMITS.professional.max_messages_month,
         managed_ai: false,
         features: [
           'Up to 1,000 customers',

@@ -19,6 +19,7 @@
  */
 
 const nodemailer = require('nodemailer');
+const { PLAN_LIMITS } = require('../config/plans');
 
 // Singleton transporter — reuses SMTP connections instead of opening a
 // new TCP/TLS handshake per email. Lazily created on first use.
@@ -414,17 +415,23 @@ async function sendPasswordResetEmail({ to, token, firstName }) {
 
 // ── Send trial limit reached email ─────────────────────────────────────────
 
-async function sendTrialLimitEmail({ to, firstName, tenantName }) {
+async function sendTrialLimitEmail({ to, firstName, tenantName, plan }) {
   const pricingUrl = `${APP_URL}/dashboard/plans`;
   const contactUrl = CONTACT_URL;
   const name = firstName || 'there';
   const company = tenantName || 'your account';
 
+  // Reflect the tenant's ACTUAL plan limits instead of a hardcoded "1/20"
+  // (that only matched the legacy pre-v3.4.2 free tier — a 'trial' plan is
+  // 3 customers / 50 messages). Fall back to the free limits if plan is unknown.
+  const limits = PLAN_LIMITS[plan] || PLAN_LIMITS.free;
+  const customerLabel = `${limits.max_customers} customer${limits.max_customers === 1 ? '' : 's'}`;
+
   const bodyHtml =
     paragraph(`Hi ${esc(name)}, your Shenmay AI trial for <strong style="color:${BRAND.ink};font-weight:600;">${esc(company)}</strong> has used up all of its included messages or customers. Your AI agents are currently paused until you upgrade to a paid plan.`) +
     noticeBanner({
       title: 'Trial plan limits',
-      items: ['1 customer', '20 AI messages per month'],
+      items: [customerLabel, `${limits.max_messages_month} AI messages per month`],
       tone: 'warning',
     }) +
     paragraph(`Upgrade now to restore your agents instantly and unlock more customers, more messages, and full AI capabilities for your business.`);
@@ -438,7 +445,7 @@ async function sendTrialLimitEmail({ to, firstName, tenantName }) {
     ctaSecondary: { label: 'Talk to sales', href: contactUrl },
   });
 
-  const text = `Hi ${name},\n\nYour Shenmay AI trial for ${company} has reached its limit (1 customer, 20 messages).\n\nYour AI agents are paused until you upgrade.\n\nView pricing: ${pricingUrl}\nTalk to sales: ${contactUrl}\n\nShenmay AI`;
+  const text = `Hi ${name},\n\nYour Shenmay AI trial for ${company} has reached its limit (${customerLabel}, ${limits.max_messages_month} messages).\n\nYour AI agents are paused until you upgrade.\n\nView pricing: ${pricingUrl}\nTalk to sales: ${contactUrl}\n\nShenmay AI`;
 
   if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
     console.log(`[Email] SMTP not configured — trial limit email would be sent to ${to}`);
