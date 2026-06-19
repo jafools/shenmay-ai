@@ -86,4 +86,14 @@ function getLast4(apiKey) {
   return apiKey.slice(-4);
 }
 
-module.exports = { encrypt, decrypt, getLast4 };
+module.exports = {
+  encrypt,
+  decrypt,
+  getLast4,
+  // Shared AES-256-GCM primitives — cryptoService.js reuses these so the
+  // algorithm + key-derivation (env-var fallback chain) have a single source
+  // of truth. Both services MUST derive the same key from the same secret,
+  // otherwise values encrypted by one can't be decrypted by the other.
+  ALGORITHM,
+  getEncryptionKey,
+};

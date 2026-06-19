@@ -27,12 +27,10 @@
 
 const crypto = require('crypto');
 
-const ALGORITHM  = 'aes-256-gcm';
-
-function getEncryptionKey() {
-  const secret = process.env.API_KEY_ENCRYPTION_SECRET || process.env.JWT_SECRET || 'shenmay-dev-encryption-key';
-  return crypto.createHash('sha256').update(secret).digest();
-}
+// AES-256-GCM primitives are shared with apiKeyService.js so the algorithm and
+// key-derivation (env-var fallback chain) have a single source of truth — both
+// services must derive the same key from the same secret.
+const { ALGORITHM, getEncryptionKey } = require('./apiKeyService');
 
 /**
  * Encrypt a plain JS object to a sentinel envelope.
