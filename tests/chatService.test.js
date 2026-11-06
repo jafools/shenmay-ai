@@ -31,11 +31,13 @@ const LLM_PATH          = require.resolve('../server/src/services/llmService');
 const REGISTRY_PATH     = require.resolve('../server/src/tools/registry');
 const CUSTOMLOADER_PATH = require.resolve('../server/src/tools/customToolLoader');
 const SVC_PATH          = require.resolve('../server/src/engine/chatService');
+const MEMORY_PATH       = require.resolve('../server/src/engine/memoryUpdater');
 
-// Grab the REAL error classes + tool modules before any faking, so thrown
-// instances satisfy chatService's `instanceof` checks and so each test resets
-// the tool modules to real (no fake leaks across tests via require.cache).
-const { NoApiKeyError } = require('../server/src/services/llmService');
+// Grab the REAL llmService, error classes + tool modules before any faking, so
+// thrown instances satisfy chatService's `instanceof` checks and so each test
+// resets the tool modules to real (no fake leaks across tests via require.cache).
+const realLlm           = require('../server/src/services/llmService');
+const { NoApiKeyError } = realLlm;
 const { BreachError }   = require('../server/src/services/piiTokenizer');
 const realRegistry      = require('../server/src/tools/registry');
 const realCustomLoader  = require('../server/src/tools/customToolLoader');
@@ -48,7 +50,7 @@ function fakeModule(path, exports) {
 // whatever is in require.cache for its module-load `require()` calls. Every
 // faked module is set on EVERY call (defaulting to real) so a fake from one
 // test can't leak into the next.
-function loadChatService({ db, llm = {}, registry, customLoader } = {}) {
+function loadChatService({ db, llm = {}, registry, customLoader, memoryUpdater } = {}) {
   delete require.cache[SVC_PATH];
   fakeModule(DB_PATH, db);
   fakeModule(LLM_PATH, Object.assign({
@@ -61,6 +63,10 @@ function loadChatService({ db, llm = {}, registry, customLoader } = {}) {
   }, llm));
   fakeModule(REGISTRY_PATH, registry || realRegistry);
   fakeModule(CUSTOMLOADER_PATH, customLoader || realCustomLoader);
+  // memoryUpdater binds llmService at module load, so the real one is
+  // re-evaluated against this call's fakes unless a stub is supplied.
+  if (memoryUpdater) fakeModule(MEMORY_PATH, memoryUpdater);
+  else delete require.cache[MEMORY_PATH];
   return require('../server/src/engine/chatService');
 }
 
@@ -447,6 +453,100 @@ test('handleMessage replays only the capped window + the new user message', asyn
   assertEqual(captured[0].role, 'user', 'first replayed message is a user turn');
   assertEqual(captured[6].role, 'user', 'last message is the new user turn');
   assertEqual(captured[6].content, 'hello there', 'new user message appended verbatim');
+});
+
+section('per-message memory update (identified customers)');
+
+// memoryUpdater dispatches its fast-model calls (fact extraction every
+// exchange, soul evolution every 5 msgs) on tenant.llm_provider. While the call
+// site dropped it, every tenant's key went to Anthropic with Claude Haiku: an
+// OpenAI BYOK key 401'd on every identified-customer message and memory
+// silently degraded to keyword extraction.
+const identifiedArgs = { ...baseArgs, isAnonymous: false };
+
+test('memory update receives the tenant id, llm_provider and tokenization flag', async () => {
+  const db = makeDb(aiModeHandler({ conv: { ...CONV_ROW, llm_provider: 'openai' } }));
+  let captured = null;
+  const chatService = loadChatService({
+    db,
+    memoryUpdater: { updateMemoryAfterExchange: async (args) => { captured = args; } },
+  });
+
+  await chatService.handleMessage({ db, ...identifiedArgs });
+
+  assert(captured, 'updateMemoryAfterExchange runs for an identified customer');
+  assertEqual(captured.tenant.id, 't1', 'tenant id forwarded');
+  assertEqual(captured.tenant.llm_provider, 'openai', 'tenant llm_provider forwarded');
+  assertEqual(captured.tenant.pii_tokenization_enabled, false, 'tokenization flag forwarded');
+  assertEqual(captured.apiKey, 'sk-test', 'resolved key forwarded');
+});
+
+test('openai tenant: memory fact extraction dispatches to openai + its fast model, not Anthropic', async () => {
+  const db = makeDb(aiModeHandler({ conv: { ...CONV_ROW, llm_provider: 'openai' } }));
+  const dispatched = [];
+  const chatService = loadChatService({
+    db,
+    llm: {
+      // memoryUpdater's single LLM entry point (callHaikuForJSON → callClaude)
+      callClaude: async (_system, _messages, model, _maxTokens, apiKey, opts = {}) => {
+        dispatched.push({ model, apiKey, provider: opts.provider });
+        return '{}';
+      },
+    },
+  });
+
+  await chatService.handleMessage({ db, ...identifiedArgs });
+  await flushMicrotasks(); // let the fire-and-forget memory update settle
+
+  assertEqual(dispatched.length, 1, 'one fact-extraction call (count 2: no summary or soul pass)');
+  assertEqual(dispatched[0].provider, 'openai', 'dispatched to the tenant provider');
+  assertEqual(dispatched[0].model, process.env.LLM_OPENAI_MINI_MODEL || 'gpt-4o-mini',
+    'openai fast model, not Claude Haiku');
+  assertEqual(dispatched[0].apiKey, 'sk-test', 'with the tenant key');
+});
+
+test('mock tenant with a key: memory update reaches no provider adapter, falls back to keywords', async () => {
+  // A mock tenant can still resolve a key (managed AI, a stored BYOK key, a
+  // self-hosted env key). With llm_provider forwarded, the REAL registry
+  // rejects 'mock' inside the memory helper before any adapter (network) runs.
+  // Exercised at the memoryUpdater level so it doesn't depend on how
+  // handleMessage routes a mock chat.
+  const adapters = [
+    require('../server/src/services/llm/anthropicAdapter'),
+    require('../server/src/services/llm/openaiAdapter'),
+  ];
+  const realChats = adapters.map((a) => a.chat);
+  let adapterCalls = 0;
+  for (const a of adapters) a.chat = async () => { adapterCalls++; return '{}'; };
+  try {
+    const db = makeDb();
+    fakeModule(DB_PATH, db);
+    fakeModule(LLM_PATH, realLlm);
+    delete require.cache[MEMORY_PATH];
+    const { updateMemoryAfterExchange } = require('../server/src/engine/memoryUpdater');
+
+    const { error, warns } = await runCapturing(() => updateMemoryAfterExchange({
+      customerMessage: 'hello there',
+      agentResponse:   'MOCK_REPLY',
+      currentMemory:   null,
+      currentSoul:     null,
+      customerId:      'c1',
+      conversationId:  'conv1',
+      messageCount:    2,
+      sessionType:     'regular',
+      apiKey:          'sk-test',
+      tenant:          { id: 't1', llm_provider: 'mock', pii_tokenization_enabled: false },
+      db,
+    }));
+
+    assert(!error, `must not throw, threw: ${error && error.message}`);
+    assertEqual(adapterCalls, 0, 'no provider adapter is reached for a mock tenant');
+    assert(warns.some((w) => w.includes('Unknown LLM provider')), 'registry rejected the mock provider');
+    assert(db.calls.some((c) => c.sql.includes('UPDATE customers SET memory_file')),
+      'keyword fallback still updates memory');
+  } finally {
+    adapters.forEach((a, i) => { a.chat = realChats[i]; });
+  }
 });
 
 // ── Run queue ────────────────────────────────────────────────────────────────
