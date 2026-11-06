@@ -126,6 +126,17 @@ test.describe('Widget — Anonymous Session', () => {
     const iframe = page.frameLocator(SEL_WIDGET.iframe);
     await expect(iframe.locator('#chat-wrapper')).toBeVisible({ timeout: 15_000 });
 
+    // Assert on the /chat round-trip itself. A bare ".msg.agent is visible"
+    // check proves nothing: the greeting is already a .msg.agent bubble, and so
+    // is the widget's own "Sorry, I had trouble responding" fallback when /chat
+    // fails, which is how every mock-mode chat 500'd unnoticed after #170.
+    // Arm the wait BEFORE sending so the response can't be missed.
+    const chatResponse = page.waitForResponse(
+      (resp) => new URL(resp.url()).pathname === '/api/widget/chat'
+        && resp.request().method() === 'POST',
+      { timeout: 30_000 }
+    );
+
     // Type a message
     await iframe.locator(SEL_WIDGET.chatInput).fill('Hello, this is a test message');
     await iframe.locator(SEL_WIDGET.sendBtn).click();
@@ -133,9 +144,23 @@ test.describe('Widget — Anonymous Session', () => {
     // User message should appear in the messages area
     await expect(iframe.locator('.msg.user').first()).toBeVisible({ timeout: 5_000 });
 
-    // Typing indicator should show while waiting for response
-    // (may be brief, so we just check the response arrives)
-    await expect(iframe.locator('.msg.agent').first()).toBeVisible({ timeout: 30_000 });
+    const resp = await chatResponse;
+    expect(resp.status(), `POST /api/widget/chat returned ${resp.status()}`).toBe(200);
+    const body = await resp.json();
+    expect(typeof body.content, 'chat reply carries text content').toBe('string');
+    const reply = body.content.trim();
+    expect(reply.length, 'chat reply is not empty').toBeGreaterThan(0);
+    // ...and isn't one of the server's own 200-status failure replies (no API
+    // key, PII breach guard), which would also render as a normal bubble.
+    expect(reply, 'server answered with a failure reply').not.toMatch(/having trouble connecting|sensitive information/i);
+
+    // The widget rendered the server's reply, and the error fallback never appeared.
+    await expect(
+      iframe.locator('.msg.agent .bubble', { hasText: reply.slice(0, 40) })
+    ).toBeVisible({ timeout: 5_000 });
+    await expect(
+      iframe.locator('.msg.agent .bubble', { hasText: 'Sorry, I had trouble responding' })
+    ).toHaveCount(0);
   });
 });
 

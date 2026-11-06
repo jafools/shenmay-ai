@@ -7,7 +7,9 @@
  *   SHENMAY_DEPLOYMENT != 'selfhosted'      → skip (SaaS VPS — not our concern)
  *   selfhosted + no SHENMAY_LICENSE_KEY     → trial mode (local limits, no cloud call)
  *   selfhosted + key present, valid         → apply plan limits; schedule 24h heartbeat
- *   selfhosted + key present, invalid       → log error + exit(1)
+ *   selfhosted + key rejected by the master → env key: log error + exit(1)
+ *                                             dashboard key: fall back to trial limits
+ *   selfhosted + master unavailable at boot → keep current limits; retry on the heartbeat
  *   heartbeat fails (transient network)     → warn only, do NOT crash running instance
  *
  * Shared shapes
@@ -40,8 +42,11 @@ const crypto = require('crypto');
 const { PLAN_LIMITS, isSelfHosted } = require('../config/plans');
 const { envVar } = require('../utils/env');
 
-const VALIDATE_URL = envVar('LICENSE_VALIDATE_URL',
-  'https://api.pontensolutions.com/api/license/validate');
+// `||` rather than envVar's `??`: docker compose passes an empty string when the
+// operator leaves SHENMAY_LICENSE_VALIDATE_URL unset, and that must fall back to
+// the default instead of becoming an unparseable URL.
+const VALIDATE_URL = envVar('LICENSE_VALIDATE_URL')
+  || 'https://api.pontensolutions.com/api/license/validate';
 
 const HEARTBEAT_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
@@ -141,6 +146,13 @@ function post(url, body) {
         try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
         catch { resolve({ status: res.statusCode, body: {} }); }
       });
+      // A connection that closes after the headers never emits 'end', and the
+      // request's idle timeout no longer applies, so without these the promise
+      // would never settle and boot would hang before app.listen().
+      res.on('error', reject);
+      res.on('close', () => {
+        if (!res.complete) reject(new Error('License server closed the connection mid-response'));
+      });
     });
 
     req.on('error',   reject);
@@ -148,6 +160,19 @@ function post(url, body) {
     req.write(payload);
     req.end();
   });
+}
+
+/**
+ * The license master could not be reached at all (DNS failure, connection
+ * refused, TLS error, timeout). Distinct from "License invalid: …", which is a
+ * verdict from the master. Callers treat it as transient.
+ */
+class LicenseServerUnreachableError extends Error {
+  constructor(cause) {
+    super(`License server unreachable: ${(cause && cause.message) || cause}`);
+    this.name = 'LicenseServerUnreachableError';
+    this.code = 'LICENSE_SERVER_UNREACHABLE';
+  }
 }
 
 // ── Cloud validation call ─────────────────────────────────────────────────────
@@ -160,13 +185,21 @@ function post(url, body) {
  * @throws  {Error} `License invalid: <reason>` — caller MUST treat messages
  *          containing "License key not found" / "revoked" / "expired" /
  *          "already bound" as DEFINITIVE (see {@link isDefinitiveFailure}).
- *          All other throws are transient (network, 5xx).
+ *          All other throws are transient: 5xx / non-verdict responses, and
+ *          {@link LicenseServerUnreachableError} when the master is unreachable.
  */
 async function callValidate(licenseKey) {
-  const { status, body } = await post(VALIDATE_URL, {
-    license_key: licenseKey,
-    instance_id: await getInstanceId(),
-  });
+  const instanceId = await getInstanceId();
+  let response;
+  try {
+    response = await post(VALIDATE_URL, {
+      license_key: licenseKey,
+      instance_id: instanceId,
+    });
+  } catch (err) {
+    throw new LicenseServerUnreachableError(err);
+  }
+  const { status, body } = response;
 
   // Narrow the validated-response shape before returning — everything else
   // becomes a definitive failure the caller can branch on.
@@ -312,9 +345,10 @@ async function checkLicenseOnStartup() {
   if (!licenseKey) {
     // ── Trial mode ───────────────────────────────────────────────────────────
     // No key required to start the trial. Limits are enforced via the
-    // subscription row seeded by seedSelfHostedTenant (20 msg, 1 customer).
+    // subscription row seeded by seedSelfHostedTenant (PLAN_LIMITS.trial).
+    const trial = PLAN_LIMITS.trial;
     console.log('[License] No license key — running in self-hosted trial mode.');
-    console.log('[License]   Limits: 20 messages/mo, 1 customer.');
+    console.log(`[License]   Limits: ${trial.max_messages_month} messages/mo, ${trial.max_customers} customers.`);
     const appUrl = (process.env.APP_URL || 'https://shenmay.ai').replace(/\/$/, '');
     console.log(`[License]   Upgrade: ${appUrl}/license`);
     return;
@@ -332,16 +366,29 @@ async function checkLicenseOnStartup() {
     scheduleHeartbeat(licenseKey);
   } catch (err) {
     console.error(`[License] Validation failed: ${err.message}`);
+    if (!isDefinitiveFailure(err.message)) {
+      // Transient: the master is unreachable (DNS, network, timeout) or answered
+      // with something other than a verdict (5xx, non-JSON). Same policy as a
+      // failed heartbeat: keep whatever limits the last successful validation
+      // applied (a fresh install stays on its seeded trial row), keep serving,
+      // and let the 24h heartbeat re-validate. Exiting here turned any
+      // license-server outage into a crash-loop for every env-key install, and
+      // the trial fallback demoted paying dashboard-key installs on restart.
+      console.warn('[License] License server unavailable — keeping the current plan limits; will retry every 24h.');
+      scheduleHeartbeat(licenseKey);
+      return;
+    }
     if (keySource === 'db') {
-      // Dashboard-activated key turned out to be invalid (revoked, expired,
-      // network down on first boot, etc). Don't crash — fall back to trial
-      // limits and let the owner reactivate from the dashboard.
+      // Dashboard-activated key was rejected by the master (revoked, expired,
+      // not found, bound elsewhere). Don't crash — fall back to trial limits
+      // and let the owner reactivate from the dashboard.
       console.warn('[License] Falling back to trial limits. Reactivate from /dashboard/plans.');
       try { await applyPlanLimits('trial'); } catch { /* best-effort */ }
     } else {
-      // Env-var path stays strict: an invalid key in .env is almost certainly
-      // operator error and should fail loud rather than silently downgrade.
-      console.error('[License] Check SHENMAY_LICENSE_KEY and internet connectivity.');
+      // Env-var path stays strict: a key in .env that the master rejects is
+      // almost certainly operator error and should fail loud rather than
+      // silently downgrade.
+      console.error('[License] Check SHENMAY_LICENSE_KEY.');
       console.error('[License] Refusing to start.');
       process.exit(1);
     }
@@ -366,7 +413,9 @@ async function checkLicenseOnStartup() {
  * @returns {Promise<ActivateResult>}
  * @throws  {Error} Propagates the master's validation error (e.g.
  *          "License invalid: License has expired") so the route can
- *          surface the reason to the dashboard.
+ *          surface the reason to the dashboard, or a
+ *          LicenseServerUnreachableError (code LICENSE_SERVER_UNREACHABLE)
+ *          when the master can't be reached; nothing is persisted then.
  */
 async function activateLicense(licenseKey, tenantId) {
   if (!licenseKey || typeof licenseKey !== 'string') {
@@ -468,4 +517,6 @@ module.exports = {
   deactivateLicense,
   getLicenseStatus,
   getInstanceId,
+  // Exposed for tests only.
+  _internal: { VALIDATE_URL },
 };

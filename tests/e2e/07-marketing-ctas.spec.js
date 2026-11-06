@@ -19,6 +19,17 @@ const { test, expect, request } = require('@playwright/test');
  *   2. At least one CTA points at `shenmay.ai/signup` (the must-exist path).
  *   3. Every absolute link to `shenmay.ai` resolves (HEAD → 200 or 30x).
  *
+ * OPT-IN (since 2026-11)
+ * ======================
+ * The marketing guard only runs when MARKETING_URL is set explicitly, e.g.
+ *   MARKETING_URL=https://pontensolutions.com/products/shenmay-ai npx playwright test 07-marketing-ctas
+ * The marketing site is a separate, Lovable-managed repo; its content changes
+ * on its own schedule and must not turn this repo's CI red (the nightly e2e
+ * failed on this spec from 2026-08-24 until GitHub disabled the schedule).
+ * Shenmay is now sold "on request" and the signup CTA was removed on purpose,
+ * so the "at least one CTA points at shenmay.ai/signup" check fails until
+ * self-serve signup returns.
+ *
  * THE SKIP CLAUSE
  * ===============
  * If the marketing site is unreachable (Cloudflare blip, Lovable build
@@ -27,11 +38,12 @@ const { test, expect, request } = require('@playwright/test');
  * block merges on the app repo.
  */
 
-const MARKETING_URL = process.env.MARKETING_URL || 'https://pontensolutions.com/products/shenmay-ai';
+const MARKETING_URL = process.env.MARKETING_URL || '';
 const PRODUCTION_APP = 'https://shenmay.ai';
 
 test.describe('Marketing CTAs — regression guard', () => {
   test.describe.configure({ mode: 'serial' });
+  test.skip(!MARKETING_URL, 'Marketing-site guard is opt-in: set MARKETING_URL to run it.');
 
   let reachable = false;
   let links = [];

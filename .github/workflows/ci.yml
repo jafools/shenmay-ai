@@ -484,7 +484,7 @@ jobs:
 
       - name: Bump subscription to master + force mock LLM provider
         run: |
-          # The setup wizard creates a 'trial' sub with 20 msg/mo. The widget
+          # The setup wizard creates a 'trial' sub with 50 msg/mo. The widget
           # spec sends a handful of messages — fine for one run, but the 5x
           # repeatability matrix would cross the cap. Bump to master here so
           # every cell starts clean.

@@ -86,7 +86,7 @@ router.post('/validate', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// Trial key issuance: 14-day expiry, plan='trial' (20 msg/mo, 1 customer).
+// Trial key issuance: 14-day expiry, plan='trial' (PLAN_LIMITS.trial: 50 msg/mo, 3 customers).
 // One active trial per email — re-requests return the existing key.
 router.post('/trial', async (req, res, next) => {
   if (!isMaster) {

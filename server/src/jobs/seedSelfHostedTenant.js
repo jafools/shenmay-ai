@@ -8,7 +8,7 @@
  * After this runs:
  *   - One tenant exists with the operator's company name
  *   - One admin account exists (email = MASTER_EMAIL, pre-verified)
- *   - One trial subscription exists (20 messages/mo, 1 customer)
+ *   - One trial subscription exists (PLAN_LIMITS.trial: 50 messages/mo, 3 customers)
  *
  * Idempotent: does nothing if a tenant already exists.
  */
@@ -75,7 +75,7 @@ async function seedSelfHostedTenant() {
 
   console.log(`[Self-Hosted] ✓ Tenant seeded. Login: ${email}`);
   const appUrl = (process.env.APP_URL || 'https://pontensolutions.com').replace(/\/$/, '');
-  console.log(`[Self-Hosted]   Trial: 20 messages/mo, 1 customer. Upgrade at ${appUrl}/license`);
+  console.log(`[Self-Hosted]   Trial: ${limits.max_messages_month} messages/mo, ${limits.max_customers} customers. Upgrade at ${appUrl}/license`);
 }
 
 module.exports = { seedSelfHostedTenant };

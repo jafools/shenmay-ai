@@ -2,6 +2,8 @@
 
 ## How we ship Shenmay features (READ FIRST — non-negotiable)
 
+**⚠ 2026-11-06 — the Hetzner prod server is gone.** `204.168.232.24` is no longer ours (its SSH host keys changed), so do NOT SSH or deploy there and skip the Hetzner steps below. The SaaS is offline; current state is in `docs/SESSION_NOTES.md`.
+
 > Set up 2026-04-17. Applies to every change in this repo. Full procedure: `docs/RELEASING.md`.
 
 ```

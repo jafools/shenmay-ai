@@ -466,8 +466,8 @@ const ShenmayDashboardLayout = () => {
                   {usageData.customer_limit_reached && usageData.message_limit_reached
                     ? "You've used all trial customers and messages — no new sessions, and no agent replies until you upgrade."
                     : usageData.customer_limit_reached
-                    ? "You've reached the 1-customer trial limit. Existing conversations keep flowing; new visitors can't start a session until you upgrade."
-                    : "You've used all 20 trial messages this month. Agents stop replying until next month or until you upgrade."}
+                    ? `You've reached the ${usageData.customers_limit}-customer trial limit. Existing conversations keep flowing; new visitors can't start a session until you upgrade.`
+                    : `You've used all ${usageData.messages_limit} trial messages this month. Agents stop replying until next month or until you upgrade.`}
                 </p>
               </div>
             </div>
