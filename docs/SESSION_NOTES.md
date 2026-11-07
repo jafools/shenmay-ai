@@ -5,6 +5,34 @@
 
 ---
 
+## Last updated: 2026-11-06 — **Health sweep of the shelved project + revival-blockers fix PR**
+
+Shenmay has been shelved since 2026-09-27 (SaaS switched off; sold "on request" only). A full sweep on 2026-11-06 found the code healthy but the product **not usable or sellable as-is**.
+
+### What still works
+- CI on `main` (`a80038e`): unit + integration + client build + self-hosted smoke green. The only e2e failure was spec 07, which checks the external marketing site.
+- A fresh `scripts/install.sh` install of `:stable` 3.7.1 on a clean VM: setup wizard, every dashboard page, the widget loads and greets, reboot recovery. (Replies through the default Anthropic provider fail on 3.7.1; see the model fix below.) A 3.3.12 install upgrades to 3.7.1 cleanly (migrations 038–046).
+- **v3.7.1** was tagged 2026-06-19 on `a80038e` (#244, single-source AES key derivation) and is `:stable` / `:latest` / `:3.7.1` on GHCR. It was never recorded here.
+
+### Prod is gone
+- `204.168.232.24` is **no longer ours** (different SSH host keys, newer OS). Do NOT SSH or deploy there; the Hetzner commands in `CLAUDE.md` and `docs/RELEASING.md` are stale. Treat the prod DB (tenants + license registry) as lost unless a backup turns up.
+
+### Fixed in the `fix/revival-blockers` PR
+- The default Sonnet model `claude-sonnet-4-20250514` was **retired by Anthropic on 2026-06-15**, so every Anthropic-provider reply failed. Now `claude-sonnet-4-6` (adapter + both compose files). Every older self-hosted compose file injects the retired ID through `LLM_SONNET_MODEL`, and upgrades keep that file, so the adapter maps a retired ID from env to the new default (with a warning). The adapter also reads text blocks by type instead of `content[0]`: one prerequisite for a Claude 5.x default, which still needs `max_tokens` headroom and handling for thinking-only replies.
+- The license master `api.pontensolutions.com` has no DNS. Boot validation now treats an unreachable or non-answering master as transient (keep current limits, retry on the 24h heartbeat) instead of `exit(1)` for env keys or a trial demotion for dashboard keys; a response cut off mid-body no longer hangs boot. Activation answers 503 with a clear message. `SHENMAY_LICENSE_VALIDATE_URL` is passed through the self-hosted compose file.
+- Mock-provider chat (used by CI e2e) had 500'd since #170, because `getDefaultModel('mock')` threw. The widget e2e now asserts on the `/chat` response instead of on any agent bubble.
+- Marketing spec 07 is opt-in via `MARKETING_URL`.
+- Trial copy now matches `PLAN_LIMITS.trial` (50 msg/mo, 3 customers; it said 20 / 1) in the installer, setup wizard, dashboard banner and Plans page.
+- `install.sh` creates `.env` as mode 600 before writing secrets.
+
+### Still open
+- No license master exists, so paid activation is impossible until one is stood up. Restore its license registry first: a key the master doesn't know gets "License key not found", a definitive rejection, so env-key installs would refuse to start.
+- Sonnet 4.6 retires no sooner than 2027-02-17, and OpenAI `gpt-4o` / `gpt-4o-mini` shut down 2027-01-14. Both need a migration verified with a live key.
+- The project hooks in `.claude/settings.json` misfire (`cmd /c` under Git Bash). Fixing the syntax would switch the claude-flow hooks on for the first time, so it's a remove-vs-activate decision for Austin.
+- Legal templates (ToS / DPA / Privacy) are unfilled.
+
+---
+
 ## Last updated: 2026-06-18 (PM/3) — **v3.7.0 LIVE — the entire 2026-06-10 audit fix-sprint shipped to customers**
 
 Tagged + deployed the whole audit sprint (PRs #217–#242) to production as **v3.7.0**. Customers are now on v3.7.0 (was v3.6.2).

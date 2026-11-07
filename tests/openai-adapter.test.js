@@ -335,6 +335,83 @@ group('getDefaultModel(provider, role)', () => {
 });
 
 
+// ── Anthropic defaults + response parsing ─────────────────────────────────────
+// claude-sonnet-4-20250514 (the old Sonnet default) was retired by Anthropic on
+// 2026-06-15, so every chat failed out of the box. Pin the replacement and keep
+// the docker-compose `:-` fallbacks in lockstep: compose passes its fallback
+// into the container, so a stale compose default silently overrides the code.
+group('Anthropic adapter defaults + response parsing', () => {
+  const anthropic = registry.getAdapter('anthropic');
+  const { textFromContent } = anthropic._internal;
+
+  test('Sonnet default is claude-sonnet-4-6 when LLM_SONNET_MODEL is unset', () => {
+    const saved = process.env.LLM_SONNET_MODEL;
+    delete process.env.LLM_SONNET_MODEL;
+    try {
+      assertEqual(anthropic.defaultModel('sonnet'), 'claude-sonnet-4-6');
+    } finally {
+      if (saved !== undefined) process.env.LLM_SONNET_MODEL = saved;
+    }
+  });
+
+  test('A retired Sonnet ID arriving via env (old compose fallback) is replaced', () => {
+    // Every released docker-compose.selfhosted.yml injects the retired ID, and
+    // the documented upgrade keeps the customer's compose file.
+    const saved = process.env.LLM_SONNET_MODEL;
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      for (const retired of ['claude-sonnet-4-20250514', 'claude-sonnet-4-0']) {
+        process.env.LLM_SONNET_MODEL = retired;
+        assertEqual(anthropic.defaultModel('sonnet'), 'claude-sonnet-4-6', `${retired} must be remapped`);
+        assertEqual(registry.getDefaultModel('claude', 'sonnet'), 'claude-sonnet-4-6', `${retired} via the registry`);
+      }
+      process.env.LLM_SONNET_MODEL = 'claude-sonnet-5-5';
+      assertEqual(anthropic.defaultModel('sonnet'), 'claude-sonnet-5-5', 'a current model ID passes through');
+    } finally {
+      console.warn = warn;
+      if (saved === undefined) delete process.env.LLM_SONNET_MODEL; else process.env.LLM_SONNET_MODEL = saved;
+    }
+  });
+
+  test('docker-compose model fallbacks match the adapter defaults', () => {
+    const fs = require('fs');
+    const savedS = process.env.LLM_SONNET_MODEL;
+    const savedH = process.env.LLM_HAIKU_MODEL;
+    delete process.env.LLM_SONNET_MODEL;
+    delete process.env.LLM_HAIKU_MODEL;
+    try {
+      for (const file of ['docker-compose.yml', 'docker-compose.selfhosted.yml']) {
+        const src = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+        const sonnet = (src.match(/LLM_SONNET_MODEL:\s*\$\{LLM_SONNET_MODEL:-([^}]+)\}/) || [])[1];
+        const haiku  = (src.match(/LLM_HAIKU_MODEL:\s*\$\{LLM_HAIKU_MODEL:-([^}]+)\}/) || [])[1];
+        assertEqual(sonnet, anthropic.defaultModel('sonnet'), `${file} LLM_SONNET_MODEL fallback`);
+        assertEqual(haiku, anthropic.defaultModel('haiku'), `${file} LLM_HAIKU_MODEL fallback`);
+      }
+    } finally {
+      if (savedS !== undefined) process.env.LLM_SONNET_MODEL = savedS;
+      if (savedH !== undefined) process.env.LLM_HAIKU_MODEL = savedH;
+    }
+  });
+
+  test('textFromContent skips a leading thinking block', () => {
+    assertEqual(textFromContent([
+      { type: 'thinking', thinking: '', signature: 'sig' },
+      { type: 'text', text: 'Hello there' },
+    ]), 'Hello there');
+  });
+
+  test('textFromContent returns a single text block verbatim', () => {
+    assertEqual(textFromContent([{ type: 'text', text: '  Hi  ' }]), '  Hi  ');
+  });
+
+  test('textFromContent of an empty response is an empty string', () => {
+    assertEqual(textFromContent([]), '');
+    assertEqual(textFromContent(undefined), '');
+  });
+});
+
+
 console.log('');
 console.log(`== Results: ${passed} passed, ${failed} failed ==`);
 process.exit(failed === 0 ? 0 : 1);

@@ -15,6 +15,15 @@ export default function SelfHostedView({ currentPlan, isTrialPlan, usage, licens
   const [licenseError, setLicenseError]     = useState(null);
   const [licenseSuccess, setLicenseSuccess] = useState(null);
 
+  // Show the limits stored on the subscription row (the same source as the
+  // usage meters and limit checks) rather than hardcoded numbers: 'free' is
+  // 1 / 20 and an admin can set custom limits.
+  const trialMessages  = usage?.messages_limit  ?? 50;
+  const trialCustomers = usage?.customers_limit ?? 3;
+  // The auth-context subscription behind isTrialPlan is fetched once, so it
+  // goes stale after an activation here; licenseInfo is re-fetched by onRefresh.
+  const onTrial = ["free", "trial"].includes(licenseInfo?.plan ?? currentPlan);
+
   const handleActivateLicense = async (e) => {
     if (e?.preventDefault) e.preventDefault();
     if (!licenseInput.trim()) return;
@@ -29,7 +38,7 @@ export default function SelfHostedView({ currentPlan, isTrialPlan, usage, licens
   };
 
   const handleDeactivateLicense = async () => {
-    if (!window.confirm("Deactivate this license? You'll revert to trial limits (20 messages/mo, 1 customer).")) return;
+    if (!window.confirm("Deactivate this license? You'll revert to trial limits (50 messages/mo, 3 customers).")) return;
     setLicenseBusy(true); setLicenseError(null); setLicenseSuccess(null);
     try {
       await deactivateLicense();
@@ -50,11 +59,11 @@ export default function SelfHostedView({ currentPlan, isTrialPlan, usage, licens
         </div>
       </div>
 
-      {isTrialPlan && (
+      {onTrial && (
         <div style={{ marginBottom: 20 }}>
           <Notice tone="teal" icon={Zap}>
             <strong style={{ color: T.ink }}>Free trial active.</strong>{" "}
-            Limited to 20 messages/mo and 1 customer. Purchase a license to unlock your full plan.
+            Limited to {trialMessages} messages/mo and {trialCustomers} customer{trialCustomers === 1 ? "" : "s"}. Purchase a license to unlock your full plan.
           </Notice>
         </div>
       )}

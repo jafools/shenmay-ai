@@ -44,9 +44,51 @@ function getClient(apiKey) {
   return client;
 }
 
+// claude-sonnet-4-20250514 was retired by Anthropic on 2026-06-15, so every
+// request to it fails. Sonnet 4.6 is the drop-in successor: same request and
+// response shape, no thinking unless asked for. Keep both literals in sync
+// with the LLM_*_MODEL fallbacks in both docker-compose files (a unit test
+// checks this).
+const DEFAULT_SONNET = 'claude-sonnet-4-6';
+const DEFAULT_HAIKU  = 'claude-haiku-4-5-20251001';
+
+// Retired IDs that can still arrive via env: every docker-compose.selfhosted.yml
+// released before this fix sets LLM_SONNET_MODEL=claude-sonnet-4-20250514 as
+// its `:-` fallback, and the documented upgrade (`docker compose pull && up -d`)
+// keeps the customer's existing compose file. Treat them as unset instead of
+// sending a dead model.
+const RETIRED_MODELS = new Set(['claude-sonnet-4-20250514', 'claude-sonnet-4-0']);
+const _retiredWarned = new Set();
+
+function modelFromEnv(name, fallback) {
+  const value = process.env[name];
+  if (!value) return fallback;
+  if (RETIRED_MODELS.has(value)) {
+    if (!_retiredWarned.has(name)) {
+      _retiredWarned.add(name);
+      console.warn(`[LLM] ${name}=${value} is a retired Anthropic model; using ${fallback} instead. An older docker-compose file sets this default: refresh it, or set ${name} in .env.`);
+    }
+    return fallback;
+  }
+  return value;
+}
+
 function defaultModel(role) {
-  if (role === 'haiku') return process.env.LLM_HAIKU_MODEL || 'claude-haiku-4-5-20251001';
-  return process.env.LLM_SONNET_MODEL || 'claude-sonnet-4-20250514';
+  if (role === 'haiku') return modelFromEnv('LLM_HAIKU_MODEL', DEFAULT_HAIKU);
+  return modelFromEnv('LLM_SONNET_MODEL', DEFAULT_SONNET);
+}
+
+/**
+ * Concatenate the text blocks of a Messages API response. Don't read
+ * content[0]: newer models can return a thinking block first (the Claude 5
+ * generation thinks by default), and content[0].text would then be undefined,
+ * i.e. an empty reply. For a single text block this returns it verbatim.
+ */
+function textFromContent(content) {
+  return (content || [])
+    .filter(b => b.type === 'text')
+    .map(b => b.text)
+    .join('');
 }
 
 /**
@@ -94,7 +136,7 @@ async function chat({
     messages: sendMessages,
   });
 
-  const rawText = response.content[0]?.text ?? '';
+  const rawText = textFromContent(response.content);
   return tokenizer ? tokenizer.detokenize(rawText, tokenMap) : rawText;
 }
 
@@ -232,4 +274,6 @@ module.exports = {
   chatWithTools,
   validateKey,
   defaultModel,
+  // Exposed for tests only.
+  _internal: { textFromContent },
 };

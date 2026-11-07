@@ -8,7 +8,7 @@ export const STRIPE_PORTAL_LINK           = "https://billing.stripe.com/p/login/
 // plan, and a one-line value-prop comparing the deltas.
 export const UPGRADE_MAP = {
   free:    { next: "starter", delta: "50 customers (vs 1) · 1,000 messages/mo (vs 20) · Keep your own API key" },
-  trial:   { next: "starter", delta: "50 customers (vs 1) · 1,000 messages/mo (vs 20) · Keep your own API key" },
+  trial:   { next: "starter", delta: "50 customers (vs 3) · 1,000 messages/mo (vs 50) · Keep your own API key" },
   starter: { next: "growth",  delta: "250 customers (vs 50) · 5,000 messages/mo (vs 1,000) · 25 agent seats · Priority support" },
   growth:  { next: "professional", delta: "1,000 customers (vs 250) · 25,000 messages/mo (vs 5,000) · 100 agent seats · Dedicated support" },
 };

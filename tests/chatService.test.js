@@ -354,6 +354,56 @@ test('tools path is taken when tools exist + managed AI enabled; reply is saniti
   assertEqual(standardCalled, 0, 'standard path NOT used when tools path taken');
 });
 
+section('mock provider (CI e2e + demo mode)');
+
+test('llm_provider=mock replies via the standard path instead of throwing (regression: #170)', async () => {
+  // Since #170 the standard path called getDefaultModel(conv.llm_provider)
+  // BEFORE getAgentResponse's mock branch, and the real registry throws
+  // "Unknown LLM provider" for 'mock', so every mock-mode chat 500'd.
+  const db = makeDb(aiModeHandler({ conv: { ...CONV_ROW, llm_provider: 'mock' } }));
+  let standardCalled = 0;
+  const chatService = loadChatService({
+    db,
+    llm: { getAgentResponse: async () => { standardCalled++; return 'MOCK_REPLY'; } },
+  });
+
+  const { value: result, error } = await runCapturing(() =>
+    chatService.handleMessage({ db, ...baseArgs }));
+
+  assert(!error, `must not throw, threw: ${error && error.message}`);
+  assertEqual(result.kind, 'reply', 'kind should be reply');
+  assertEqual(result.content, 'MOCK_REPLY', 'the mock reply is returned');
+  assertEqual(standardCalled, 1, 'getAgentResponse (which owns the mock branch) is called');
+});
+
+test('llm_provider=mock never takes the tool loop, even with tools + managed AI', async () => {
+  const db = makeDb(aiModeHandler({ conv: { ...CONV_ROW, llm_provider: 'mock' } }));
+  let toolsCalled = 0;
+  let standardCalled = 0;
+  const chatService = loadChatService({
+    db,
+    registry: { getToolDefinitions: () => [{ name: 'demo_tool' }] },
+    customLoader: {
+      loadCustomTools:       async () => [],
+      toToolDefinition:      (r) => r,
+      buildCustomExecutor:   () => (() => {}),
+      buildCombinedExecutor: () => (() => {}),
+    },
+    llm: {
+      callClaudeWithTools: async () => { toolsCalled++; return 'RAW'; },
+      getAgentResponse:    async () => { standardCalled++; return 'MOCK_REPLY'; },
+    },
+  });
+
+  const { value: result, error } = await runCapturing(() =>
+    chatService.handleMessage({ db, ...baseArgs, managedAiEnabled: true }));
+
+  assert(!error, `must not throw, threw: ${error && error.message}`);
+  assertEqual(result.content, 'MOCK_REPLY', 'mock reply returned');
+  assertEqual(toolsCalled, 0, 'the tool loop has no mock adapter, so it must not run');
+  assertEqual(standardCalled, 1, 'standard path used');
+});
+
 section('generic error + not-found');
 
 test('a generic LLM error is re-thrown (route maps to next(err) → 500)', async () => {
