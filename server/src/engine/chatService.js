@@ -528,7 +528,9 @@ async function handleMessage({ db, tenantId, customerId, conversationId, isAnony
       messageCount:    msgCount,
       sessionType:     conv.onboarding_status !== 'complete' ? 'onboarding' : 'regular',
       apiKey:          resolveApiKey(tenantForLLM),
-      tenant:          { id: tenant_id, pii_tokenization_enabled: conv.pii_tokenization_enabled },
+      // memoryUpdater routes its fast-model calls by tenant.llm_provider; drop it
+      // and every tenant's key goes to Anthropic (same shape as the session-end path).
+      tenant:          { id: tenant_id, llm_provider: conv.llm_provider, pii_tokenization_enabled: conv.pii_tokenization_enabled },
       db,
     }).catch(err => console.error('[Widget] Memory update error:', err.message));
   }
