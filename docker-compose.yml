@@ -116,7 +116,7 @@ services:
       STRIPE_PORTAL_RETURN_URL: ${STRIPE_PORTAL_RETURN_URL:-https://shenmay.ai/shenmay/dashboard/plans}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       LLM_HAIKU_MODEL: ${LLM_HAIKU_MODEL:-claude-haiku-4-5-20251001}
-      LLM_SONNET_MODEL: ${LLM_SONNET_MODEL:-claude-sonnet-4-20250514}
+      LLM_SONNET_MODEL: ${LLM_SONNET_MODEL:-claude-sonnet-4-6}
       LLM_OPENAI_MODEL: ${LLM_OPENAI_MODEL:-gpt-4o}
       LLM_OPENAI_MINI_MODEL: ${LLM_OPENAI_MINI_MODEL:-gpt-4o-mini}
       LLM_BRAND_LEARNING_EMBED_MODEL: ${LLM_BRAND_LEARNING_EMBED_MODEL:-text-embedding-3-small}

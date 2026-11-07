@@ -63,6 +63,13 @@ router.post('/activate', async (req, res, next) => {
     if (err.message && err.message.startsWith('License invalid:')) {
       return res.status(400).json({ error: err.message.replace('License invalid: ', '') });
     }
+    // The license server couldn't be reached at all (DNS, network, timeout).
+    // Not the key's fault and nothing was changed, so say that instead of a 500.
+    if (err.code === 'LICENSE_SERVER_UNREACHABLE') {
+      return res.status(503).json({
+        error: "Couldn't reach the Shenmay license server. Check this server's internet connection and try again. Your current plan hasn't changed.",
+      });
+    }
     next(err);
   }
 });

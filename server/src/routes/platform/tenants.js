@@ -56,7 +56,7 @@ router.post('/', async (req, res, next) => {
       base_soul_template,
       onboarding_config,
       llm_provider = 'claude',
-      llm_model = process.env.LLM_SONNET_MODEL || 'claude-sonnet-4-20250514',
+      llm_model = process.env.LLM_SONNET_MODEL || 'claude-sonnet-4-6',
 
       // First admin account
       admin_name,

@@ -1,8 +1,12 @@
 /**
  * SHENMAY AI — License Service Unit Tests (instance identity / T9)
  *
- * Pure-JS unit tests — no real DB, no server, no network. The DB is a tiny
- * in-memory fake injected via require.cache, so these run in ~50ms.
+ * Pure-JS unit tests — no real DB, no external network. The DB is a tiny
+ * in-memory fake injected via require.cache; the startup-validation tests talk
+ * to a throwaway license master on 127.0.0.1.
+ *
+ * Also covers boot-time validation when the license master is unavailable
+ * (transient: keep running, keep limits) vs. when it rejects the key.
  *
  * Covers the T9 binding-logic change (audit M4): licenseService.getInstanceId()
  * must produce a STABLE id so the license master doesn't hard-lock a customer on
@@ -29,6 +33,7 @@ function loadService(fakeDb, env = {}) {
   for (const k of [
     'SHENMAY_INSTANCE_ID', 'NOMII_INSTANCE_ID',
     'SHENMAY_LICENSE_KEY', 'NOMII_LICENSE_KEY',
+    'SHENMAY_LICENSE_VALIDATE_URL', 'NOMII_LICENSE_VALIDATE_URL',
   ]) delete process.env[k];
   Object.assign(process.env, env);
 
@@ -144,6 +149,223 @@ test('env pin beats a persisted DB id', async () => {
     { SHENMAY_INSTANCE_ID: 'pin-wins' }
   );
   assertEqual(await svc.getInstanceId(), 'pin-wins');
+});
+
+// ── Startup validation against an unavailable / answering license master ─────
+//
+// The license master (api.pontensolutions.com) went away in Sep 2026. Before
+// this suite, an env-var key + an unreachable master meant process.exit(1) on
+// every boot (crash-loop), and a dashboard key was demoted to trial limits.
+// These tests run a throwaway master on 127.0.0.1, so they stay hermetic.
+
+const http = require('http');
+
+const DEFAULT_VALIDATE_URL = 'https://api.pontensolutions.com/api/license/validate';
+
+// A local fake license master that answers every request with status + body.
+function fakeMaster(status, body) {
+  return new Promise((resolve) => {
+    const srv = http.createServer((req, res) => {
+      req.resume();
+      req.on('end', () => {
+        res.writeHead(status, { 'Content-Type': 'application/json', Connection: 'close' });
+        res.end(JSON.stringify(body));
+      });
+    });
+    srv.listen(0, '127.0.0.1', () => {
+      const { port } = srv.address();
+      resolve({
+        url: `http://127.0.0.1:${port}/api/license/validate`,
+        close: () => new Promise((r) => srv.close(r)),
+      });
+    });
+  });
+}
+
+// A URL nothing listens on (bind an ephemeral port, then release it).
+async function deadUrl() {
+  const srv = http.createServer();
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const { port } = srv.address();
+  await new Promise((r) => srv.close(r));
+  return `http://127.0.0.1:${port}/api/license/validate`;
+}
+
+// Fake DB for the startup path; records every query.
+function startupDb({ dbKey = null } = {}) {
+  const calls = [];
+  return {
+    calls,
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      if (/instance_identity/i.test(sql)) return { rows: [{ instance_id: 'test-instance-id' }] };
+      if (/SELECT license_key FROM tenants/i.test(sql)) return { rows: dbKey ? [{ license_key: dbKey }] : [] };
+      return { rows: [], rowCount: 1 };
+    },
+  };
+}
+
+// Plans written to the subscription row, in order.
+const planWrites = (db) => db.calls
+  .filter((c) => /UPDATE subscriptions/i.test(c.sql))
+  .map((c) => c.params[0]);
+
+// A master that sends 200 headers and part of the body, then closes the
+// connection normally (FIN), so the client never sees the response 'end'.
+function truncatingMaster() {
+  return new Promise((resolve) => {
+    const srv = http.createServer((req, res) => {
+      req.resume();
+      req.on('end', () => {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': '100', Connection: 'close' });
+        res.write('{"valid":tr');
+        setTimeout(() => res.socket.end(), 20);
+      });
+    });
+    srv.listen(0, '127.0.0.1', () => {
+      const { port } = srv.address();
+      resolve({
+        url: `http://127.0.0.1:${port}/api/license/validate`,
+        close: () => new Promise((r) => srv.close(r)),
+      });
+    });
+  });
+}
+
+// Run checkLicenseOnStartup as a production self-hosted install would, with
+// process.exit trapped and console output captured; always restores both.
+// Gives up after timeoutMs so a hang is reported (settled: false) instead of
+// leaving the stubs in place for the rest of the run.
+async function runStartup(svc, { timeoutMs = 5000 } = {}) {
+  const saved = {
+    NODE_ENV: process.env.NODE_ENV,
+    SHENMAY_DEPLOYMENT: process.env.SHENMAY_DEPLOYMENT,
+    exit: process.exit,
+    log: console.log, warn: console.warn, error: console.error,
+  };
+  const exits = [];
+  const out = [];
+  process.env.NODE_ENV = 'production';
+  process.env.SHENMAY_DEPLOYMENT = 'selfhosted';
+  process.exit = (code) => { exits.push(code); };
+  console.log = console.warn = console.error = (...a) => out.push(a.map(String).join(' '));
+  let timer;
+  let settled;
+  try {
+    settled = await Promise.race([
+      svc.checkLicenseOnStartup().then(() => true),
+      new Promise((r) => { timer = setTimeout(() => r(false), timeoutMs); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    process.exit = saved.exit;
+    console.log = saved.log; console.warn = saved.warn; console.error = saved.error;
+    if (saved.NODE_ENV === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = saved.NODE_ENV;
+    if (saved.SHENMAY_DEPLOYMENT === undefined) delete process.env.SHENMAY_DEPLOYMENT;
+    else process.env.SHENMAY_DEPLOYMENT = saved.SHENMAY_DEPLOYMENT;
+  }
+  return { exits, out, settled };
+}
+
+section('validate URL resolution');
+
+test('an empty SHENMAY_LICENSE_VALIDATE_URL (compose passthrough) falls back to the default', async () => {
+  const svc = loadService(startupDb(), { SHENMAY_LICENSE_VALIDATE_URL: '' });
+  assertEqual(svc._internal.VALIDATE_URL, DEFAULT_VALIDATE_URL);
+});
+
+test('a set SHENMAY_LICENSE_VALIDATE_URL overrides the default', async () => {
+  const svc = loadService(startupDb(), { SHENMAY_LICENSE_VALIDATE_URL: 'https://licenses.example.com/validate' });
+  assertEqual(svc._internal.VALIDATE_URL, 'https://licenses.example.com/validate');
+});
+
+section('checkLicenseOnStartup — license master unavailable (transient)');
+
+test('env key + unreachable master: keeps running and leaves the plan alone', async () => {
+  const db = startupDb();
+  const svc = loadService(db, { SHENMAY_LICENSE_KEY: 'SHENMAY-ENV-KEY', SHENMAY_LICENSE_VALIDATE_URL: await deadUrl() });
+  const { exits, out } = await runStartup(svc);
+  assertEqual(exits.length, 0, 'must not exit when the master is merely unreachable');
+  assertEqual(planWrites(db).length, 0, 'must not touch the subscription limits');
+  assert(out.some((l) => l.includes('License server unavailable')), 'logs the keep-limits warning');
+});
+
+test('env key + master answering 503: treated as transient, keeps running', async () => {
+  const master = await fakeMaster(503, { error: 'Service Unavailable' });
+  try {
+    const db = startupDb();
+    const svc = loadService(db, { SHENMAY_LICENSE_KEY: 'SHENMAY-ENV-KEY', SHENMAY_LICENSE_VALIDATE_URL: master.url });
+    const { exits } = await runStartup(svc);
+    assertEqual(exits.length, 0, 'a 5xx is not a verdict on the key');
+    assertEqual(planWrites(db).length, 0, 'must not touch the subscription limits');
+  } finally { await master.close(); }
+});
+
+test('master closes the connection mid-response: boot settles instead of hanging', async () => {
+  const master = await truncatingMaster();
+  try {
+    const db = startupDb();
+    const svc = loadService(db, { SHENMAY_LICENSE_KEY: 'SHENMAY-ENV-KEY', SHENMAY_LICENSE_VALIDATE_URL: master.url });
+    const { settled, exits } = await runStartup(svc);
+    assert(settled, 'checkLicenseOnStartup never settled, so boot would hang before app.listen()');
+    assertEqual(exits.length, 0, 'a dropped connection is transient');
+    assertEqual(planWrites(db).length, 0, 'limits untouched');
+  } finally { await master.close(); }
+});
+
+test('dashboard key + unreachable master: keeps current limits (no trial demotion)', async () => {
+  const db = startupDb({ dbKey: 'SHENMAY-DB-KEY' });
+  const svc = loadService(db, { SHENMAY_LICENSE_VALIDATE_URL: await deadUrl() });
+  const { exits } = await runStartup(svc);
+  assertEqual(exits.length, 0, 'must not exit');
+  assertEqual(planWrites(db).length, 0, 'a paying install must not be demoted to trial by an outage');
+});
+
+section('checkLicenseOnStartup — license master verdicts (unchanged)');
+
+test('env key the master revokes: still refuses to start (exit 1)', async () => {
+  const master = await fakeMaster(403, { error: 'License has been revoked' });
+  try {
+    const db = startupDb();
+    const svc = loadService(db, { SHENMAY_LICENSE_KEY: 'SHENMAY-ENV-KEY', SHENMAY_LICENSE_VALIDATE_URL: master.url });
+    const { exits } = await runStartup(svc);
+    assertEqual(exits[0], 1, 'a definitive rejection of an env key still fails loud');
+  } finally { await master.close(); }
+});
+
+test('dashboard key the master says has expired: falls back to trial limits', async () => {
+  const master = await fakeMaster(403, { error: 'License has expired' });
+  try {
+    const db = startupDb({ dbKey: 'SHENMAY-DB-KEY' });
+    const svc = loadService(db, { SHENMAY_LICENSE_VALIDATE_URL: master.url });
+    const { exits } = await runStartup(svc);
+    assertEqual(exits.length, 0, 'dashboard keys never crash the server');
+    assertEqual(planWrites(db).join(','), 'trial', 'reverts to trial limits');
+  } finally { await master.close(); }
+});
+
+test('valid key: applies the plan the master returns', async () => {
+  const master = await fakeMaster(200, { valid: true, plan: 'growth', expires_at: null });
+  try {
+    const db = startupDb();
+    const svc = loadService(db, { SHENMAY_LICENSE_KEY: 'SHENMAY-ENV-KEY', SHENMAY_LICENSE_VALIDATE_URL: master.url });
+    const { exits } = await runStartup(svc);
+    assertEqual(exits.length, 0, 'must not exit');
+    assertEqual(planWrites(db).join(','), 'growth', 'growth limits applied');
+  } finally { await master.close(); }
+});
+
+section('activateLicense — license master unreachable');
+
+test('throws LICENSE_SERVER_UNREACHABLE and persists nothing', async () => {
+  const db = startupDb();
+  const svc = loadService(db, { SHENMAY_LICENSE_VALIDATE_URL: await deadUrl() });
+  let caught = null;
+  try { await svc.activateLicense('SHENMAY-NEW-KEY', 'tenant-1'); } catch (e) { caught = e; }
+  assert(caught, 'activation must fail');
+  assertEqual(caught.code, 'LICENSE_SERVER_UNREACHABLE', 'typed so the route can answer 503');
+  assert(!db.calls.some((c) => /UPDATE tenants/i.test(c.sql)), 'the key must not be persisted');
+  assertEqual(planWrites(db).length, 0, 'limits must not change');
 });
 
 // ── Run queue ────────────────────────────────────────────────────────────────

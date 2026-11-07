@@ -379,12 +379,19 @@ async function handleMessage({ db, tenantId, customerId, conversationId, isAnony
 
   let agentResponse;
 
+  // The mock provider (CI e2e, demos) has no adapter in the LLM registry:
+  // getAgentResponse() answers it with a canned reply, but getDefaultModel()
+  // and the tool loop both throw on it ("Unknown LLM provider"). So mock
+  // always takes the standard path and skips model resolution.
+  const isMockProvider = conv.llm_provider === 'mock';
+
   // LLM call is the most likely intermittent failure point (network, provider
   // rate limits, timeouts). Wrap separately so the log line identifies the path
   // and carries tenant/conversation/model context without leaking keys.
-  const llmPath = toolDefs.length > 0 && (tenantForLLM.managed_ai_enabled || tenantForLLM.llm_api_key_encrypted)
+  const llmPath = !isMockProvider && toolDefs.length > 0 && (tenantForLLM.managed_ai_enabled || tenantForLLM.llm_api_key_encrypted)
     ? 'tools'
     : 'standard';
+  let dispatchModel = null; // resolved per path below; named in the failure log
   try {
     if (llmPath === 'tools') {
       // ── Tool-enabled path ──────────────────────────────────────────────────
@@ -421,7 +428,7 @@ async function handleMessage({ db, tenantId, customerId, conversationId, isAnony
       // tenants.llm_model is set at signup time and never updated when the
       // tenant later switches provider, so trust the active provider's
       // adapter default instead of the (potentially stale) stored column.
-      const dispatchModel = getDefaultModel(conv.llm_provider, 'sonnet');
+      dispatchModel = getDefaultModel(conv.llm_provider, 'sonnet');
 
       const raw = await callClaudeWithTools(
         systemPrompt,
@@ -442,8 +449,8 @@ async function handleMessage({ db, tenantId, customerId, conversationId, isAnony
     } else {
       // ── Standard path (no tools, or mock) ─────────────────────────────────
       // See note on dispatchModel in the tool-loop branch above — same
-      // rationale applies here.
-      const dispatchModel = getDefaultModel(conv.llm_provider, 'sonnet');
+      // rationale applies here. Mock has no model to resolve (see isMockProvider).
+      dispatchModel = isMockProvider ? null : getDefaultModel(conv.llm_provider, 'sonnet');
 
       agentResponse = await getAgentResponse({
         systemPrompt,
@@ -479,7 +486,7 @@ async function handleMessage({ db, tenantId, customerId, conversationId, isAnony
       // on the exact cause of the user-facing "Sorry, I had trouble responding".
       console.error(
         `[Widget][chat][llm] path=${llmPath} provider=${conv.llm_provider || 'unknown'} ` +
-        `model=${conv.llm_model || 'default'} tenant=${tenant_id} conv=${conversation_id} ` +
+        `model=${dispatchModel || (isMockProvider ? 'mock' : 'unresolved')} tenant=${tenant_id} conv=${conversation_id} ` +
         `msgs=${existingMessages.length + 1} — ${llmErr.message}`
       );
       if (llmErr.stack) console.error(llmErr.stack);

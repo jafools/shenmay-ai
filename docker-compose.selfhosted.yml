@@ -87,7 +87,7 @@ services:
       PII_TOKENIZER_ENABLED: ${PII_TOKENIZER_ENABLED:-true}
       JWT_EXPIRY: ${JWT_EXPIRY:-7d}
       LLM_HAIKU_MODEL: ${LLM_HAIKU_MODEL:-claude-haiku-4-5-20251001}
-      LLM_SONNET_MODEL: ${LLM_SONNET_MODEL:-claude-sonnet-4-20250514}
+      LLM_SONNET_MODEL: ${LLM_SONNET_MODEL:-claude-sonnet-4-6}
       LLM_OPENAI_MODEL: ${LLM_OPENAI_MODEL:-gpt-4o}
       LLM_OPENAI_MINI_MODEL: ${LLM_OPENAI_MINI_MODEL:-gpt-4o-mini}
       LLM_BRAND_LEARNING_EMBED_MODEL: ${LLM_BRAND_LEARNING_EMBED_MODEL:-text-embedding-3-small}
@@ -124,7 +124,7 @@ services:
       # and switches the dashboard to license-based billing.
       SHENMAY_DEPLOYMENT: selfhosted
       # ── Shenmay License ─────────────────────────────────────
-      # Leave blank to start the free trial (20 messages/mo, 1 customer).
+      # Leave blank to start the free trial (50 messages/mo, 3 customers).
       # Purchase a paid license at: https://pontensolutions.com/shenmay/license
       # After purchase, paste your key in .env and restart the backend.
       SHENMAY_LICENSE_KEY: ${SHENMAY_LICENSE_KEY:-}
@@ -134,6 +134,10 @@ services:
       # one id to follow the install across server moves (see
       # docs/RUNBOOK-LICENSE-REBIND.md).
       SHENMAY_INSTANCE_ID: ${SHENMAY_INSTANCE_ID:-}
+      # Optional: point license validation at a different license server.
+      # Leave blank for the default
+      # (https://api.pontensolutions.com/api/license/validate).
+      SHENMAY_LICENSE_VALIDATE_URL: ${SHENMAY_LICENSE_VALIDATE_URL:-}
       # ── Observability (task T10) ──────────────────────────
       # Error tracking is OFF by default on self-hosted — nothing leaves your
       # server unless YOU set your own Sentry DSN here.
